@@ -9,11 +9,11 @@
 
 #include "math_prelude.hpp"
 
+#include "simulation.hpp"
+
 extern "C" {
 _declspec(dllexport) uint64_t NvOptimusEnablement = 0x00000001;
 }
-
-#define GRID_RESOLUTION 64
 
 float g_camera_elevation = 0.0;
 float g_camera_azimuth   = 0.0;
@@ -186,7 +186,6 @@ GLuint gl_compile_and_link_shaders(
     return program;
 }
 
-
 void main() {
     // WINDOWING & CONTEXT SETUP
     glfwSetErrorCallback(glfw_error_callback);
@@ -203,6 +202,9 @@ void main() {
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
+
+    // INIT COMPUTE
+    init_accelerated_simulation();
 
     // SHADER PROGRAM SETUP
 
@@ -277,7 +279,7 @@ void main() {
 
 
     // TODO: swizzle?
-    float (*density_field)[GRID_RESOLUTION][GRID_RESOLUTION] = new float[GRID_RESOLUTION][GRID_RESOLUTION][GRID_RESOLUTION];
+    float (*density_field)[GRID_SIZE][GRID_SIZE] = new float[GRID_SIZE][GRID_SIZE][GRID_SIZE];
 
     // MAIN LOOP
     while (!glfwWindowShouldClose(window)) {
@@ -290,32 +292,12 @@ void main() {
 
         double time = glfwGetTime();
         glUniform1d(u_time, time);
-        for (int x = 0; x < GRID_RESOLUTION; x++) {
-            for (int y = 0; y < GRID_RESOLUTION; y++) {
-                for (int z = 0; z < GRID_RESOLUTION; z++) {
-                    vec3 p = vec3(float(x), float(y), float(z)) / float(GRID_RESOLUTION-1) * 2.0f - vec3(1.0);
 
-                    const float fade_radius = 0.8f;
+        update_density_field_accelerated((float*) density_field, (float) time);
 
-                    // cuboid fade
-                    // vec3 q = abs(p) - vec3(fade_radius);
-                    // float d = (length(max(q,0.0f)) + min(max(q.x,max(q.y,q.z)),0.0f)) / (1-fade_radius);
-                    // float fade = fmax(0.0, fmin(1.0, 1.0 - sqrt(d)));
-
-                    // sphere fade
-                    float d = fmax(0.0, (length(p) - fade_radius) / (1-fade_radius));
-                    float fade = fmin(1.0, 1.0 - sqrt(d));
-
-                    float t = 0.3*time;
-                    float wave = sinf(TAU*(p.z + 1.5*sinf(TAU*(0.5*length(vec3(p.x,p.y,0)-vec3(0.25)) + 0.3*t)) + 0.15*(1.0+0.2*sin(TAU*0.4*t))*0.2*t));
-
-                    density_field[x][y][z] = 0.7 * fade * (fmax(0.0, wave));
-                }
-            }
-        }
         glTexImage3D(
             GL_TEXTURE_3D, 0, GL_R16F,
-            GRID_RESOLUTION, GRID_RESOLUTION, GRID_RESOLUTION, 0,
+            GRID_SIZE, GRID_SIZE, GRID_SIZE, 0,
             GL_RED, GL_FLOAT, density_field
         );
         // glGenerateMipmap(GL_TEXTURE_3D);
@@ -331,5 +313,6 @@ void main() {
     }
 
     // CLEANUP
+    end_accelerated_simulation();
     glfwTerminate();
 }
