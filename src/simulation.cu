@@ -27,7 +27,7 @@ void update_density_field_kernel(float* density_field, double time) {
     px -= 0.25;
     pz -= 0.25;
     float l = sqrt(px*px + pz*pz);
-    float wave = sinf(TAU*(py + 1.5*sinf(TAU*(0.5*l + 0.3*t)) + 0.15*(1.0+0.2*sin(TAU*0.4*t))*0.2*t));
+    float wave = sinf(TAU*(py + 0.4*cosf(TAU*(1.2*py + 0.7*t)) + 1.5*sinf(TAU*(0.5*l + 0.3*t)) + 0.15*(1.0+0.2*sin(TAU*0.4*t))*0.2*t));
 
     density_field[index] = 0.7 * fade * (fmaxf(0.0, wave));
 }

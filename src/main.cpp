@@ -285,13 +285,14 @@ void main() {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
-        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth);
+        double time = glfwGetTime();
+        glUniform1d(u_time, time);
+
+        float camera_azimuth_offset = TAU/100.0 * time;
+        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth + camera_azimuth_offset);
         mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
-
-        double time = glfwGetTime();
-        glUniform1d(u_time, time);
 
         update_density_field_accelerated((float*) density_field, (float) time);
 
@@ -303,7 +304,7 @@ void main() {
         // glGenerateMipmap(GL_TEXTURE_3D);
 
         glClearColor(0.0, 0.0, 0.0, 1.0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIgT);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
 
