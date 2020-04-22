@@ -1,10 +1,10 @@
-#define GRID_SIZE 128
+#define GRID_SIZE 256
 #define BLOCK_SIZE 8
 
 #define GRID_FOOTPRINT GRID_SIZE*GRID_SIZE*GRID_SIZE*sizeof(float)
 
-void init_accelerated_simulation();
+void init_accelerated_simulation(GLuint* texture);
 
 void end_accelerated_simulation();
 
-void update_density_field_accelerated(float *h_density_field, double time);
+void update_density_field_accelerated(double time);

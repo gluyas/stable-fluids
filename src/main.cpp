@@ -203,9 +203,6 @@ void main() {
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
-    // INIT COMPUTE
-    init_accelerated_simulation();
-
     // SHADER PROGRAM SETUP
 
     const int num_headers = 1;
@@ -264,19 +261,14 @@ void main() {
     glEnableVertexAttribArray(a_pos);
     glVertexAttribPointer(a_pos, 3, GL_FLOAT, GL_FALSE, 0, 0);
 
-    GLuint texture;
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+
+    // INIT COMPUTE
     glActiveTexture(GL_TEXTURE0);
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_3D, texture);
-
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0);
-
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-
+    GLuint density_field_texture;
+    init_accelerated_simulation(&density_field_texture);
 
     // TODO: swizzle?
     float (*density_field)[GRID_SIZE][GRID_SIZE] = new float[GRID_SIZE][GRID_SIZE][GRID_SIZE];
@@ -291,22 +283,10 @@ void main() {
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
         double time = glfwGetTime();
+        update_density_field_accelerated(time);
         glUniform1d(u_time, time);
 
-        update_density_field_accelerated((float*) density_field, (float) time);
-
-        glTexImage3D(
-            GL_TEXTURE_3D, 0, GL_R16F,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, 0,
-            GL_RED, GL_FLOAT, density_field
-        );
-        // glGenerateMipmap(GL_TEXTURE_3D);
-
-        glClearColor(0.0, 0.0, 0.0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-
         glDrawElements(GL_TRIANGLES, 3*6*2, GL_UNSIGNED_BYTE, CUBE_INDICES);
 
         glfwSwapBuffers(window);
