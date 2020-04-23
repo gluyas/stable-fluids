@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "cstdlib": "cpp",
-        "xlocale": "cpp",
-        "xstring": "cpp",
-        "cmath": "cpp"
-    }
-}

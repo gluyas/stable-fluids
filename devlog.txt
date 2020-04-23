@@ -1,0 +1,16 @@
+16/04
+Basic volumetric renderer.
+Uses a fixed step size and a horrible integrator, but should be sufficient for MVP.
+Density field is generated linearly in software, runs 64^3 samples in ~17ms.
+
+19/04
+CUDA integration.
+The density field generator was moved to a CUDA kernel, but data is copied from device to host before being sent to OpenGL.
+~8x perf improvement: runs 128^3 samples at ~17ms.
+
+22/04
+CUDA + OpenGL interop.
+Density texture is now written to by CUDA kernel and read by OpenGL without copying.
+Another ~8x perf improvement: (between 256-320)^3 samples in ~17ms.
+Even for such a simple program this is a pretty big number!
+I estimate that the fluid sim will be about 2 orders of magnitude more expensive than this basic operation, which means it should be able to run 128^3 at ~33ms. Goal set!

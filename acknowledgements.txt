@@ -1,0 +1,3 @@
+https://rauwendaal.net/2011/12/02/writing-to-3d-opengl-textures-in-cuda-4-1-with-3d-surface-writes/
+https://github.com/Forceflow/cuda2GLcore
+https://stackoverflow.com/a/14038590/11617929
