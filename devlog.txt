@@ -14,3 +14,9 @@ Density texture is now written to by CUDA kernel and read by OpenGL without copy
 Another ~8x perf improvement: (between 256-320)^3 samples in ~17ms.
 Even for such a simple program this is a pretty big number!
 I estimate that the fluid sim will be about 2 orders of magnitude more expensive than this basic operation, which means it should be able to run 128^3 at ~33ms. Goal set!
+
+25/04
+Velocity fields.
+This implementes the double-buffering strategy I will be using for the velocity fields.
+Because the density field also needs to be read and written in the same kernel, I'm unsure if it's better to use two GL textures or memcpy after each write.
+This also adds a crude advection algorithm.

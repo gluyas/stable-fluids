@@ -15,6 +15,9 @@ extern "C" {
 _declspec(dllexport) uint64_t NvOptimusEnablement = 0x00000001;
 }
 
+double g_time = 0.0;
+double g_delta_time;
+
 float g_camera_elevation = 0.0;
 float g_camera_azimuth   = 0.0;
 float g_camera_distance  = 3.0;
@@ -45,6 +48,14 @@ void glfw_error_callback(int error, const char* description) {
 
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     switch (key) {
+    case GLFW_KEY_SPACE:
+        if (action == GLFW_PRESS) {
+            if (mods & GLFW_MOD_CONTROL) {
+                sim_debug_reset_velocity_field(g_time+1, g_time+2, g_time+3);
+            }
+            sim_debug_reset_density_field(g_time);
+        }
+        break;
     case GLFW_KEY_ESCAPE:
         if (action == GLFW_PRESS) glfwSetWindowShouldClose(window, GLFW_TRUE);
         break;
@@ -200,6 +211,7 @@ void main() {
 
     glfwSetKeyCallback(window, glfw_key_callback);
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
@@ -246,6 +258,8 @@ void main() {
 
     UNIFORM(program, u_time);
 
+    UNIFORM(program, u_debug_solid_color);
+
     ATTRIBUTE(program, a_pos);
 
     // VERTEX ARRAYS
@@ -268,7 +282,10 @@ void main() {
     // INIT COMPUTE
     glActiveTexture(GL_TEXTURE0);
     GLuint density_field_texture;
-    init_accelerated_simulation(&density_field_texture);
+    sim_init(&density_field_texture);
+
+    sim_debug_reset_density_field(0.0);
+    sim_debug_reset_velocity_field(1.0, 2.0, 3.0);
 
     // TODO: swizzle?
     float (*density_field)[GRID_SIZE][GRID_SIZE] = new float[GRID_SIZE][GRID_SIZE][GRID_SIZE];
@@ -277,22 +294,28 @@ void main() {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
+        { // UPDATE TIME
+            double time = glfwGetTime();
+            g_delta_time = time - g_time;
+            g_time = time;
+            glUniform1d(u_time, g_time);
+        }
+
         vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth);
         mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
-        double time = glfwGetTime();
-        update_density_field_accelerated(time);
-        glUniform1d(u_time, time);
+        sim_update(0.1);
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
         glDrawElements(GL_TRIANGLES, 3*6*2, GL_UNSIGNED_BYTE, CUBE_INDICES);
 
         glfwSwapBuffers(window);
     }
 
     // CLEANUP
-    end_accelerated_simulation();
+    sim_end();
     glfwTerminate();
 }
