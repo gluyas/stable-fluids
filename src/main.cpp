@@ -7,8 +7,8 @@
 #define GLFW_DLL
 #include "GLFW/glfw3.h"
 
+#include "global_defines.h"
 #include "math_prelude.hpp"
-
 #include "simulation.hpp"
 
 extern "C" {
@@ -46,14 +46,23 @@ void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
+int input_set_sim_debug_data_mode = 0; // TODO: this is nasty and will scale badly
+
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     switch (key) {
     case GLFW_KEY_SPACE:
         if (action == GLFW_PRESS) {
+            float k = TAU*100;
             if (mods & GLFW_MOD_CONTROL) {
-                sim_debug_reset_velocity_field(g_time+1, g_time+2, g_time+3);
+                sim_debug_reset_velocity_field(k*(g_time+1), k*(g_time+2), k*(g_time+3));
             }
-            sim_debug_reset_density_field(g_time);
+            sim_debug_reset_density_field(k*g_time);
+        }
+        break;
+    case GLFW_KEY_GRAVE_ACCENT:
+        if (action == GLFW_PRESS) {
+            if (sim_debug_data_mode) input_set_sim_debug_data_mode = -1;
+            else                     input_set_sim_debug_data_mode =  1;
         }
         break;
     case GLFW_KEY_ESCAPE:
@@ -217,14 +226,18 @@ void main() {
 
     // SHADER PROGRAM SETUP
 
-    const int num_headers = 1;
+    const int num_headers = 2;
     const int num_shaders = 2;
     GLchar* header_srcs[num_headers]; GLint header_lens[num_headers];
     GLchar* shader_srcs[num_shaders]; GLint shader_lens[num_shaders]; GLenum shader_types[num_shaders];
     size_t len;
 
-    header_srcs[0] = read_file_to_string("src/shader/volumetric.head.glsl", &len);
-    header_lens[0] = (GLint) len;
+    // global_defines.h has special treatment to prevent mismatch between shaders and compiled code
+    header_srcs[num_headers-2] = read_file_to_string("out/global_defines.h", &len);
+    header_lens[num_headers-2] = (GLint) len;
+
+    header_srcs[num_headers-1] = read_file_to_string("src/shader/volumetric.head.glsl", &len);
+    header_lens[num_headers-1] = (GLint) len;
 
     shader_types[0] = GL_VERTEX_SHADER;
     shader_srcs[0] = read_file_to_string("src/shader/volumetric.vert.glsl", &len);
@@ -258,7 +271,13 @@ void main() {
 
     UNIFORM(program, u_time);
 
-    UNIFORM(program, u_debug_solid_color);
+    UNIFORM(program, u_debug_data_volume);
+    glUniform1i(u_debug_data_volume, 1);
+
+    // TODO: add GUI controls for debug visuals
+    UNIFORM(program, u_debug_render_flags);
+    UNIFORM(program, u_debug_render_velocity_threshold);
+    UNIFORM(program, u_debug_render_clip_bounds);
 
     ATTRIBUTE(program, a_pos);
 
@@ -280,15 +299,10 @@ void main() {
     glEnable(GL_CULL_FACE);
 
     // INIT COMPUTE
-    glActiveTexture(GL_TEXTURE0);
-    GLuint density_field_texture;
-    sim_init(&density_field_texture);
+    sim_init(GL_TEXTURE0, GL_TEXTURE1);
 
     sim_debug_reset_density_field(0.0);
     sim_debug_reset_velocity_field(1.0, 2.0, 3.0);
-
-    // TODO: swizzle?
-    float (*density_field)[GRID_SIZE][GRID_SIZE] = new float[GRID_SIZE][GRID_SIZE][GRID_SIZE];
 
     // MAIN LOOP
     while (!glfwWindowShouldClose(window)) {
@@ -299,6 +313,15 @@ void main() {
             g_delta_time = time - g_time;
             g_time = time;
             glUniform1d(u_time, g_time);
+        }
+
+        // UPDATE DEBUG VISUALIZATIONS
+        if (input_set_sim_debug_data_mode > 0) {
+            sim_debug_data_mode = NormalizedVelocityAndMagnitude;
+            glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_VELOCITIES | DEBUG_RENDER_FLAG_CLIP_BOUNDS);
+        } else if (input_set_sim_debug_data_mode < 0) {
+            sim_debug_data_mode = None;
+            glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_NONE);
         }
 
         vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth);
@@ -316,6 +339,6 @@ void main() {
     }
 
     // CLEANUP
-    sim_end();
+    sim_terminate();
     glfwTerminate();
 }

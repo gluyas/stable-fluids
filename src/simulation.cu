@@ -1,12 +1,16 @@
-#define TAU  6.28318530717958647692
-#define TAUf 6.28318530717958647692f
-
 #include <cstdio>
 
 #include "glad/glad.h"
 #include <cuda_gl_interop.h>
 
+#include "global_defines.h"
 #include "simulation.hpp"
+
+#define GRID_SIZE SIM_GRID_SIZE
+#define GRID_ELEMENTS (GRID_SIZE*GRID_SIZE*GRID_SIZE)
+#define BLOCK_SIZE 8
+
+#define DENSITY_TEXTURE_SIZE (GRID_ELEMENTS*sizeof(float))
 
 // https://stackoverflow.com/a/14038590/11617929
 #define cudaCheckErrors(ans) { cudaAssert((ans), __FILE__, __LINE__); }
@@ -76,21 +80,32 @@ surface<void,   cudaSurfaceType3D>                          d_velocity_write_sur
 texture<float4, cudaTextureType3D, cudaReadModeElementType> d_velocity_read_texture;
 // TODO: find a use for the 4th velocity component
 
-// TODO: OpenGL texture for rendering velocity field
+// DEBUG DATA FIELD
+// TODO: elide in release builds
+SimDebugDataMode sim_debug_data_mode            = None;
+SimDebugDataMode sim_debug_data_mode_prev_frame = None;
+__constant__
+SimDebugDataMode d_debug_data_mode;
+
+// OpenGL interop
+GLuint                 gl_debug_data_texture;
+cudaGraphicsResource_t gl_debug_data_texture_resource;
+
+surface<void, cudaSurfaceType3D> d_debug_data_write_surface;
 
 // INITIALIZATION
 
 __host__
-void sim_init(GLuint* density_texture) {
-    // OPENGL-HOSTED DENSITY TEXTURE (kernel output)
+void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit) {
+    // OPENGL-HOSTED DENSITY TEXTURE
+    glActiveTexture(density_texture_unit);
     glGenTextures(1, &gl_density_texture);
-    if (density_texture) *density_texture = gl_density_texture;
     glBindTexture(GL_TEXTURE_3D, gl_density_texture);
 
     // texture parameters
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0);
 
@@ -111,6 +126,7 @@ void sim_init(GLuint* density_texture) {
         // flag to enable surface writing to arrays
         cudaGraphicsRegisterFlagsSurfaceLoadStore
     ));
+    glActiveTexture(0);
 
     // initialize CUDA's helper buffer d_density_read_array
     cudaChannelFormatDesc density_format = cudaCreateChannelDesc<float>();
@@ -127,6 +143,7 @@ void sim_init(GLuint* density_texture) {
     d_density_read_texture.addressMode[1] = TEXTURE_ADDRESS_MODE;
     d_density_read_texture.addressMode[2] = TEXTURE_ADDRESS_MODE;
 
+
     // CUDA-HOSTED VELOCITY FIELD BUFFERS
     cudaChannelFormatDesc velocity_format = cudaCreateChannelDesc<float4>();
     cudaExtent velocity_extent = make_cudaExtent(GRID_SIZE, GRID_SIZE, GRID_SIZE);
@@ -142,10 +159,42 @@ void sim_init(GLuint* density_texture) {
     d_velocity_read_texture.addressMode[0] = TEXTURE_ADDRESS_MODE;
     d_velocity_read_texture.addressMode[1] = TEXTURE_ADDRESS_MODE;
     d_velocity_read_texture.addressMode[2] = TEXTURE_ADDRESS_MODE;
+
+
+    // OPENGL-HOSTED DEBUG TEXTURE
+    glActiveTexture(debug_data_texture_unit);
+    glGenTextures(1, &gl_debug_data_texture);
+    glBindTexture(GL_TEXTURE_3D, gl_debug_data_texture);
+
+    // texture parameters
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0);
+
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // allocate texture storage
+    glTexImage3D(
+        GL_TEXTURE_3D, 0, GL_RGBA32F,
+        GRID_SIZE, GRID_SIZE, GRID_SIZE, 0,
+        GL_RGBA, GL_FLOAT, NULL
+    );
+
+    // get a handle to the texture for CUDA
+    cudaCheckErrors(cudaGraphicsGLRegisterImage(
+        &gl_debug_data_texture_resource, gl_debug_data_texture,
+        GL_TEXTURE_3D,
+        // flag to enable surface writing to arrays
+        cudaGraphicsRegisterFlagsSurfaceLoadStore
+    ));
+    glActiveTexture(0);
 }
 
 __host__
-void sim_end() {
+void sim_terminate() {
     cudaCheckErrors(cudaGraphicsUnregisterResource(gl_density_texture_resource));
     glDeleteTextures(1, &gl_density_texture);
 }
@@ -183,6 +232,26 @@ void sim_unmap_gl_density() {
     sim_unmap_gl_density_without_updating_read_array();
 }
 
+__host__
+void sim_map_gl_debug_data() {
+    // borrow resource from GL and bind to surface reference
+    cudaCheckErrors(cudaGraphicsMapResources(1, &gl_debug_data_texture_resource, 0));
+    cudaArray_t d_debug_data_texture_mapped_array;
+    cudaCheckErrors(cudaGraphicsSubResourceGetMappedArray(
+        &d_debug_data_texture_mapped_array, gl_debug_data_texture_resource,
+        0, 0
+    ));
+    // bind the texture's array to the surface reference, enabling writing
+    cudaCheckErrors(cudaBindSurfaceToArray(
+        d_debug_data_write_surface, d_debug_data_texture_mapped_array
+    ));
+}
+
+__host__
+void sim_unmap_gl_debug_data() {
+    cudaCheckErrors(cudaGraphicsUnmapResources(1, &gl_debug_data_texture_resource, 0));
+}
+
 // API FUNCTIONS & KERNELS
 
 __global__
@@ -198,14 +267,11 @@ void sim_update_kernel(double dt) {
         d_velocity_read_texture,
         px, py, pz
     );
-    v.x *= dt / (float) (GRID_SIZE-1);
-    v.y *= dt / (float) (GRID_SIZE-1);
-    v.z *= dt / (float) (GRID_SIZE-1);
-
     // TODO: find q using a real path integrator
-    float qx = px - v.x;
-    float qy = py - v.y;
-    float qz = pz - v.z;
+    float qx = px - v.x * dt / (float) (GRID_SIZE-1);
+    float qy = py - v.y * dt / (float) (GRID_SIZE-1);
+    float qz = pz - v.z * dt / (float) (GRID_SIZE-1);
+
     // advection
     float4 w = tex3D(
         d_velocity_read_texture,
@@ -222,18 +288,44 @@ void sim_update_kernel(double dt) {
         d_density_read_texture,
         qx, qy, qz
     );
-    // float density = v.x;
     surf3Dwrite(
         density, d_density_write_surface,
         x*sizeof(float), y, z,
         cudaBoundaryModeTrap
     );
+
+    // TODO: eliminate conditional by moving debug_data_mode/bool into template?
+    if (d_debug_data_mode) {
+        float4 debug_data;
+        switch (d_debug_data_mode) {
+        case NormalizedVelocityAndMagnitude: {
+            float l = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+            debug_data = make_float4(v.x/l, v.y/l, v.z/l, l);
+            break;
+        }
+        default:
+            debug_data = make_float4(NAN, NAN, NAN, NAN);
+            break;
+        }
+        surf3Dwrite(
+            debug_data, d_debug_data_write_surface,
+            x*sizeof(float4), y, z,
+            cudaBoundaryModeTrap
+        );
+    }
 }
 
 // TODO: constant dt
 __host__
 void sim_update(double dt) {
     sim_map_gl_density();
+
+    if (sim_debug_data_mode != sim_debug_data_mode_prev_frame) {
+        cudaMemcpyToSymbol(d_debug_data_mode, &sim_debug_data_mode, sizeof(SimDebugDataMode));
+        sim_debug_data_mode_prev_frame = sim_debug_data_mode;
+    }
+    if (sim_debug_data_mode) sim_map_gl_debug_data();
+    // TODO: function to write debug_data without stepping simulating (to switch views while sim paused)
 
     // set read and write buffers
     if (sim_frame_is_tick()) {
@@ -248,6 +340,7 @@ void sim_update(double dt) {
     dim3 threads = dim3(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
     sim_update_kernel<<<blocks, threads>>>(dt);
 
+    if (sim_debug_data_mode) sim_unmap_gl_debug_data();
     sim_unmap_gl_density();
     sim_frame_counter += 1;
 }
@@ -282,7 +375,6 @@ void sim_debug_reset_velocity_field_kernel(float3 time) {
         v[i] = (float) (15.0 * wave);
     }
     float4 velocity = make_float4(v[0], v[1], v[2], 0.0);
-    // float4 velocity = make_float4(90.0, 0.0, 0.0, 0.0);
     surf3Dwrite(
         velocity, d_velocity_write_surface,
         x*sizeof(float4), y, z,
