@@ -27,3 +27,10 @@ Currently it supports visualizing the fluid velocity data wtih adjustable croppi
 The debug output and renderer can be extended in future to help with specific bugs in the simulation.
 It will need to be integrated with a GUI to be useful in more complex situations.
 I spent a bit too long writing the voxel raytracer, but I'm very happy with it in the end! No branches except termination conditions.
+
+28/04
+Fix texture coordinate handling in simulation update.
+This was causing a lot of weird bugs I chalked up to FP mishandling/precision, but really it was more like fencepost errors.
+I've also clarified the treatment of velocities in the simulation: velcoities are stored in terms of texture space per second, and are scaled to world space on simulation input/output.
+In future, when I set a fixed dt, I will change the internal unit to texture space per frame.
+The advection is now MUCH more stable and more fluid-y, and should actually be sufficient for the MVP (the same first order method is actually used in one of the GPU Gems samples).

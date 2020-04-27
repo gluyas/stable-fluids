@@ -12,13 +12,15 @@
 
 #define DENSITY_TEXTURE_SIZE (GRID_ELEMENTS*sizeof(float))
 
+#define GRID_SCALE SIM_GRID_SCALE
+
 // https://stackoverflow.com/a/14038590/11617929
 #define cudaCheckErrors(ans) { cudaAssert((ans), __FILE__, __LINE__); }
 inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=true) {
-   if (code != cudaSuccess) {
-      fprintf(stderr,"CUDA Assert %s(%d): %s\n", file, line, cudaGetErrorString(code));
-      if (abort) exit(code);
-   }
+    if (code != cudaSuccess) {
+        fprintf(stderr,"CUDA Assert %s(%d): %s\n", file, line, cudaGetErrorString(code));
+        if (abort) exit(code);
+    }
 }
 
 long sim_frame_counter = 0;
@@ -35,9 +37,10 @@ inline bool sim_frame_is_tock() {
 
 void set_volume_texture_parameters(textureReference* texture) {
     texture->normalized = true;
-    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeWrap;
+    texture->filterMode = cudaFilterModeLinear;
+    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeBorder;
     texture->minMipmapLevelClamp = texture->maxMipmapLevelClamp = 0.0;
-    texture->mipmapFilterMode = cudaFilterModeLinear;
+    texture->mipmapFilterMode = cudaFilterModePoint;
 }
 
 // CUDA + GL 3D TEXTURE INTEROP STRATEGY
@@ -258,17 +261,18 @@ void sim_update_kernel(double dt) {
     int y = blockIdx.y*blockDim.y + threadIdx.y;
     int z = blockIdx.z*blockDim.z + threadIdx.z;
 
-    float px = ((float) x / (float) (GRID_SIZE-1));
-    float py = ((float) y / (float) (GRID_SIZE-1));
-    float pz = ((float) z / (float) (GRID_SIZE-1));
+    float px = ((float) x + 0.5) / GRID_SIZE;
+    float py = ((float) y + 0.5) / GRID_SIZE;
+    float pz = ((float) z + 0.5) / GRID_SIZE;
     float4 v = tex3D(
         d_velocity_read_texture,
         px, py, pz
     );
-    // TODO: find q using a real path integrator
-    float qx = px - v.x * dt / (float) (GRID_SIZE-1);
-    float qy = py - v.y * dt / (float) (GRID_SIZE-1);
-    float qz = pz - v.z * dt / (float) (GRID_SIZE-1);
+    // TODO: higher order path integrator to find q
+    // TODO: store velocities as per-frame deltas with a fixed dt
+    float qx = px - v.x*dt;
+    float qy = py - v.y*dt;
+    float qz = pz - v.z*dt;
 
     // advection
     float4 w = tex3D(
@@ -297,8 +301,8 @@ void sim_update_kernel(double dt) {
         float4 debug_data;
         switch (d_debug_data_mode) {
         case NormalizedVelocityAndMagnitude: {
-            float l = sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
-            debug_data = make_float4(v.x/l, v.y/l, v.z/l, l);
+            float l = norm3df(v.x, v.y, v.z);
+            debug_data = make_float4(v.x/l, v.y/l, v.z/l, l*GRID_SCALE);
             break;
         }
         default:
@@ -346,7 +350,7 @@ void sim_update(double dt) {
 // DEBUG FUNCTIONS
 
 __global__
-void sim_debug_reset_velocity_field_kernel(float3 time) {
+void sim_debug_reset_velocity_field_kernel(float max_component, float3 time) {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
     int z = blockIdx.z*blockDim.z + threadIdx.z;
@@ -370,7 +374,7 @@ void sim_debug_reset_velocity_field_kernel(float3 time) {
         float l = sqrt(px*px + pz*pz);
         float wave = sinf(0.15*TAU*(py + 1.5*sinf(TAU*(0.5*l + 0.3*t)) + 0.15*(1.0+0.2*sinf(TAU*0.4*t))*0.2*t));
 
-        v[i] = (float) (15.0 * wave);
+        v[i] = max_component * wave;
     }
     float4 velocity = make_float4(v[0], v[1], v[2], 0.0);
     surf3Dwrite(
@@ -381,21 +385,22 @@ void sim_debug_reset_velocity_field_kernel(float3 time) {
 }
 
 __host__
-void sim_debug_reset_velocity_field(double tx, double ty, double tz) {
+void sim_debug_reset_velocity_field(float max_velocity, double tx, double ty, double tz) {
     // TODO: decide correct buffer to write into
     if (sim_frame_is_tick()) {
         cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tick_array));
     } else {
         cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tock_array));
     }
+    float max_component = max_velocity/sqrt(3) / GRID_SCALE;
 
     dim3 blocks  = dim3(GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE);
     dim3 threads = dim3(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
-    sim_debug_reset_velocity_field_kernel<<<blocks, threads>>>(make_float3(tx, ty, tz));
+    sim_debug_reset_velocity_field_kernel<<<blocks, threads>>>(max_component, make_float3(tx, ty, tz));
 }
 
 __global__
-void sim_debug_reset_density_field_kernel(double time) {
+void sim_debug_reset_density_field_kernel(float max_density, double time) {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
     int z = blockIdx.z*blockDim.z + threadIdx.z;
@@ -416,7 +421,7 @@ void sim_debug_reset_density_field_kernel(double time) {
     float l = sqrt(px*px + pz*pz);
     float wave = sinf(TAU*(py + 1.5*sinf(TAU*(0.5*l + 0.3*t)) + 0.15*(1.0+0.2*sinf(TAU*0.4*t))*0.2*t));
 
-    float density = 0.7 * fade * (fmaxf(0.0, wave));
+    float density = max_density * fade * (fmaxf(0.0, wave)*fmaxf(0.0, wave));
     surf3Dwrite(
         density, d_density_write_surface,
         x*sizeof(float), y, z,
@@ -425,12 +430,12 @@ void sim_debug_reset_density_field_kernel(double time) {
 }
 
 __host__
-void sim_debug_reset_density_field(double t) {
+void sim_debug_reset_density_field(float max_density, double t) {
     sim_map_gl_density();
 
     dim3 blocks  = dim3(GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE);
     dim3 threads = dim3(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
-    sim_debug_reset_density_field_kernel<<<blocks, threads>>>(t);
+    sim_debug_reset_density_field_kernel<<<blocks, threads>>>(max_density, t);
 
     sim_unmap_gl_density();
 }

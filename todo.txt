@@ -3,8 +3,8 @@ DEBUG FEATURES:
 - frame stepping / rewinding
 
 SIMULATION:
-- numerical stability / precision in offset texture fetches
-  - use unfiltered texture fetches and do trilinear filtering in kernel code?
+- higher order advection term (particle tracer)
+- use unfiltered texture fetches and do trilinear filtering in kernel code?
 - better defined frame-update loop
 - framerate independence
 - seperate kernel for boundary elements

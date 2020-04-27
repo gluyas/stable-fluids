@@ -46,25 +46,29 @@ void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
+const float debug_max_velocity = 1.0;
+const float debug_render_velocity_threshold_base = debug_max_velocity / 2.0;
+const float debug_render_velocity_threshold_incr = debug_render_velocity_threshold_base / 10.0;
+
 // TODO: this is nasty and will scale badly
 int   input_set_sim_debug_data_mode = 0;
-float input_mod_debug_render_velocity_threshold = 15.0;
+float input_mod_debug_render_velocity_threshold = debug_render_velocity_threshold_base;
+bool  input_do_debug_reset_velocity_field = true;
+bool  input_do_debug_reset_density_field = true;
 
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     switch (key) {
     case GLFW_KEY_MINUS:
-        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold -= 1.0;
+        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold -= debug_render_velocity_threshold_incr;
         break;
     case GLFW_KEY_EQUAL:
-        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold += 1.0;
+        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold += debug_render_velocity_threshold_incr;
         break;
     case GLFW_KEY_SPACE:
         if (action == GLFW_PRESS) {
             float k = TAU*100;
-            if (mods & GLFW_MOD_CONTROL) {
-                sim_debug_reset_velocity_field(k*(g_time+1), k*(g_time+2), k*(g_time+3));
-            }
-            sim_debug_reset_density_field(k*g_time);
+            if (mods & GLFW_MOD_CONTROL) input_do_debug_reset_velocity_field = true;
+            input_do_debug_reset_density_field = true;
         }
         break;
     case GLFW_KEY_GRAVE_ACCENT:
@@ -228,7 +232,6 @@ void main() {
 
     glfwSetKeyCallback(window, glfw_key_callback);
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
@@ -309,9 +312,6 @@ void main() {
     // INIT COMPUTE
     sim_init(GL_TEXTURE0, GL_TEXTURE1);
 
-    sim_debug_reset_density_field(0.0);
-    sim_debug_reset_velocity_field(1.0, 2.0, 3.0);
-
     // MAIN LOOP
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -324,6 +324,15 @@ void main() {
         }
 
         // UPDATE DEBUG VISUALIZATIONS
+        if (input_do_debug_reset_density_field) {
+            sim_debug_reset_density_field(1.0, 100*g_time);
+            input_do_debug_reset_density_field = false;
+        }
+        if (input_do_debug_reset_velocity_field) {
+            float k = TAU*100;
+            sim_debug_reset_velocity_field(debug_max_velocity, k*(g_time+1), k*(g_time+2), k*(g_time+3));
+            input_do_debug_reset_velocity_field = false;
+        }
         if (input_set_sim_debug_data_mode > 0) {
             sim_debug_data_mode = NormalizedVelocityAndMagnitude;
             glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_VELOCITIES | DEBUG_RENDER_FLAG_CLIP_BOUNDS);
@@ -333,7 +342,7 @@ void main() {
         }
         if (input_mod_debug_render_velocity_threshold) {
             static float threshold = 0.0;
-            threshold += input_mod_debug_render_velocity_threshold;
+            threshold = fmax(threshold + input_mod_debug_render_velocity_threshold, 0.0);
             glUniform1f(u_debug_render_velocity_threshold, threshold);
             input_mod_debug_render_velocity_threshold = 0.0;
         }
@@ -343,7 +352,7 @@ void main() {
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
-        sim_update(0.1);
+        sim_update(0.0333333);
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
