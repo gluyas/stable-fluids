@@ -33,8 +33,12 @@ inline bool sim_frame_is_tock() {
     return sim_frame_counter % 2 != 0;
 }
 
-#define TEXTURE_ADDRESS_NORMALIZED true
-#define TEXTURE_ADDRESS_MODE       cudaAddressModeBorder
+void set_volume_texture_parameters(textureReference* texture) {
+    texture->normalized = true;
+    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeWrap;
+    texture->minMipmapLevelClamp = texture->maxMipmapLevelClamp = 0.0;
+    texture->mipmapFilterMode = cudaFilterModeLinear;
+}
 
 // CUDA + GL 3D TEXTURE INTEROP STRATEGY
 //
@@ -138,10 +142,7 @@ void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit) {
     cudaCheckErrors(cudaBindTextureToArray(
         d_density_read_texture, d_density_read_array
     ));
-    d_density_read_texture.normalized     = TEXTURE_ADDRESS_NORMALIZED;
-    d_density_read_texture.addressMode[0] = TEXTURE_ADDRESS_MODE;
-    d_density_read_texture.addressMode[1] = TEXTURE_ADDRESS_MODE;
-    d_density_read_texture.addressMode[2] = TEXTURE_ADDRESS_MODE;
+    set_volume_texture_parameters(&d_density_read_texture);
 
 
     // CUDA-HOSTED VELOCITY FIELD BUFFERS
@@ -155,10 +156,7 @@ void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit) {
         &d_velocity_tock_array, &velocity_format, velocity_extent,
         cudaArraySurfaceLoadStore
     ));
-    d_velocity_read_texture.normalized     = TEXTURE_ADDRESS_NORMALIZED;
-    d_velocity_read_texture.addressMode[0] = TEXTURE_ADDRESS_MODE;
-    d_velocity_read_texture.addressMode[1] = TEXTURE_ADDRESS_MODE;
-    d_velocity_read_texture.addressMode[2] = TEXTURE_ADDRESS_MODE;
+    set_volume_texture_parameters(&d_velocity_read_texture);
 
 
     // OPENGL-HOSTED DEBUG TEXTURE

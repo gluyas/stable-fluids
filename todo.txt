@@ -4,5 +4,10 @@ DEBUG FEATURES:
 
 SIMULATION:
 - numerical stability / precision in offset texture fetches
+  - use unfiltered texture fetches and do trilinear filtering in kernel code?
 - better defined frame-update loop
 - framerate independence
+- seperate kernel for boundary elements
+
+PERFORMANCE:
+- choose a good kernel block size (expect something like 16,16,1)
