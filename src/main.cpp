@@ -46,10 +46,18 @@ void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
-int input_set_sim_debug_data_mode = 0; // TODO: this is nasty and will scale badly
+// TODO: this is nasty and will scale badly
+int   input_set_sim_debug_data_mode = 0;
+float input_mod_debug_render_velocity_threshold = 15.0;
 
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     switch (key) {
+    case GLFW_KEY_MINUS:
+        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold -= 1.0;
+        break;
+    case GLFW_KEY_EQUAL:
+        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold += 1.0;
+        break;
     case GLFW_KEY_SPACE:
         if (action == GLFW_PRESS) {
             float k = TAU*100;
@@ -322,6 +330,12 @@ void main() {
         } else if (input_set_sim_debug_data_mode < 0) {
             sim_debug_data_mode = None;
             glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_NONE);
+        }
+        if (input_mod_debug_render_velocity_threshold) {
+            static float threshold = 0.0;
+            threshold += input_mod_debug_render_velocity_threshold;
+            glUniform1f(u_debug_render_velocity_threshold, threshold);
+            input_mod_debug_render_velocity_threshold = 0.0;
         }
 
         vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth);
