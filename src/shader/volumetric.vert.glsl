@@ -9,5 +9,9 @@ out vec4 gl_Position;
 
 void main() {
     v_pos = a_pos;
-    gl_Position = u_camera * vec4(a_pos, 1.0);
+    if ((u_debug_render_flags & DEBUG_RENDER_FLAG_CLIP_BOUNDS) != 0) {
+        v_pos = max(v_pos, u_debug_render_clip_bounds[0]);
+        v_pos = min(v_pos, u_debug_render_clip_bounds[1]);
+    }
+    gl_Position = u_camera * vec4(v_pos, 1.0);
 }

@@ -1,8 +1,5 @@
 #include <cmath>
 
-#define TAU  6.28318530717958647692
-#define TAUf 6.28318530717958647692f
-
 #include "glm/vec2.hpp"
 #include "glm/vec3.hpp"
 #include "glm/vec4.hpp"

@@ -1,0 +1,29 @@
+16/04
+Basic volumetric renderer.
+Uses a fixed step size and a horrible integrator, but should be sufficient for MVP.
+Density field is generated linearly in software, runs 64^3 samples in ~17ms.
+
+19/04
+CUDA integration.
+The density field generator was moved to a CUDA kernel, but data is copied from device to host before being sent to OpenGL.
+~8x perf improvement: runs 128^3 samples at ~17ms.
+
+22/04
+CUDA + OpenGL interop.
+Density texture is now written to by CUDA kernel and read by OpenGL without copying.
+Another ~8x perf improvement: (between 256-320)^3 samples in ~17ms.
+Even for such a simple program this is a pretty big number!
+I estimate that the fluid sim will be about 2 orders of magnitude more expensive than this basic operation, which means it should be able to run 128^3 at ~33ms. Goal set!
+
+25/04
+Velocity fields.
+This implementes the double-buffering strategy I will be using for the velocity fields.
+Because the density field also needs to be read and written in the same kernel, I'm unsure if it's better to use two GL textures or memcpy after each write.
+This also adds a crude advection algorithm.
+
+26/04
+Debug output.
+Currently it supports visualizing the fluid velocity data wtih adjustable cropping and threshold.
+The debug output and renderer can be extended in future to help with specific bugs in the simulation.
+It will need to be integrated with a GUI to be useful in more complex situations.
+I spent a bit too long writing the voxel raytracer, but I'm very happy with it in the end! No branches except termination conditions.

@@ -1,10 +1,14 @@
-#define GRID_SIZE 128
-#define BLOCK_SIZE 8
+void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit);
 
-#define GRID_FOOTPRINT GRID_SIZE*GRID_SIZE*GRID_SIZE*sizeof(float)
+void sim_terminate();
 
-void init_accelerated_simulation();
+void sim_update(double dt);
 
-void end_accelerated_simulation();
+enum SimDebugDataMode {
+    None                           = 0,
+    NormalizedVelocityAndMagnitude = 1,
+};
+extern SimDebugDataMode sim_debug_data_mode;
 
-void update_density_field_accelerated(float *h_density_field, double time);
+void sim_debug_reset_density_field(double t);
+void sim_debug_reset_velocity_field(double tx, double ty, double tz);

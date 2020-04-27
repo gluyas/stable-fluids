@@ -7,13 +7,16 @@
 #define GLFW_DLL
 #include "GLFW/glfw3.h"
 
+#include "global_defines.h"
 #include "math_prelude.hpp"
-
 #include "simulation.hpp"
 
 extern "C" {
 _declspec(dllexport) uint64_t NvOptimusEnablement = 0x00000001;
 }
+
+double g_time = 0.0;
+double g_delta_time;
 
 float g_camera_elevation = 0.0;
 float g_camera_azimuth   = 0.0;
@@ -43,8 +46,25 @@ void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
+int input_set_sim_debug_data_mode = 0; // TODO: this is nasty and will scale badly
+
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     switch (key) {
+    case GLFW_KEY_SPACE:
+        if (action == GLFW_PRESS) {
+            float k = TAU*100;
+            if (mods & GLFW_MOD_CONTROL) {
+                sim_debug_reset_velocity_field(k*(g_time+1), k*(g_time+2), k*(g_time+3));
+            }
+            sim_debug_reset_density_field(k*g_time);
+        }
+        break;
+    case GLFW_KEY_GRAVE_ACCENT:
+        if (action == GLFW_PRESS) {
+            if (sim_debug_data_mode) input_set_sim_debug_data_mode = -1;
+            else                     input_set_sim_debug_data_mode =  1;
+        }
+        break;
     case GLFW_KEY_ESCAPE:
         if (action == GLFW_PRESS) glfwSetWindowShouldClose(window, GLFW_TRUE);
         break;
@@ -195,27 +215,30 @@ void main() {
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Stable Fluids", NULL, NULL);
+    // GLFWwindow* window = glfwCreateWindow(1280, 720, "Stable Fluids", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1680, 1024, "Stable Fluids", glfwGetPrimaryMonitor(), NULL);
     glfwMakeContextCurrent(window);
 
     glfwSetKeyCallback(window, glfw_key_callback);
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
-    // INIT COMPUTE
-    init_accelerated_simulation();
-
     // SHADER PROGRAM SETUP
 
-    const int num_headers = 1;
+    const int num_headers = 2;
     const int num_shaders = 2;
     GLchar* header_srcs[num_headers]; GLint header_lens[num_headers];
     GLchar* shader_srcs[num_shaders]; GLint shader_lens[num_shaders]; GLenum shader_types[num_shaders];
     size_t len;
 
-    header_srcs[0] = read_file_to_string("src/shader/volumetric.head.glsl", &len);
-    header_lens[0] = (GLint) len;
+    // global_defines.h has special treatment to prevent mismatch between shaders and compiled code
+    header_srcs[num_headers-2] = read_file_to_string("out/global_defines.h", &len);
+    header_lens[num_headers-2] = (GLint) len;
+
+    header_srcs[num_headers-1] = read_file_to_string("src/shader/volumetric.head.glsl", &len);
+    header_lens[num_headers-1] = (GLint) len;
 
     shader_types[0] = GL_VERTEX_SHADER;
     shader_srcs[0] = read_file_to_string("src/shader/volumetric.vert.glsl", &len);
@@ -249,6 +272,14 @@ void main() {
 
     UNIFORM(program, u_time);
 
+    UNIFORM(program, u_debug_data_volume);
+    glUniform1i(u_debug_data_volume, 1);
+
+    // TODO: add GUI controls for debug visuals
+    UNIFORM(program, u_debug_render_flags);
+    UNIFORM(program, u_debug_render_velocity_threshold);
+    UNIFORM(program, u_debug_render_clip_bounds);
+
     ATTRIBUTE(program, a_pos);
 
     // VERTEX ARRAYS
@@ -264,49 +295,52 @@ void main() {
     glEnableVertexAttribArray(a_pos);
     glVertexAttribPointer(a_pos, 3, GL_FLOAT, GL_FALSE, 0, 0);
 
-    GLuint texture;
-    glActiveTexture(GL_TEXTURE0);
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_3D, texture);
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
 
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    // INIT COMPUTE
+    sim_init(GL_TEXTURE0, GL_TEXTURE1);
 
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAX_LEVEL, 0);
-
-    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-
-
-    // TODO: swizzle?
-    float (*density_field)[GRID_SIZE][GRID_SIZE] = new float[GRID_SIZE][GRID_SIZE][GRID_SIZE];
+    sim_debug_reset_density_field(0.0);
+    sim_debug_reset_velocity_field(1.0, 2.0, 3.0);
 
     // MAIN LOOP
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
-        double time = glfwGetTime();
-        glUniform1d(u_time, time);
+        { // UPDATE TIME
+            double time = glfwGetTime();
+            g_delta_time = time - g_time;
+            g_time = time;
+            glUniform1d(u_time, g_time);
+        }
 
-        float camera_azimuth_offset = TAU/100.0 * time;
-        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth + camera_azimuth_offset);
-        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
+        // UPDATE DEBUG VISUALIZATIONS
+        if (input_set_sim_debug_data_mode > 0) {
+            sim_debug_data_mode = NormalizedVelocityAndMagnitude;
+            glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_VELOCITIES | DEBUG_RENDER_FLAG_CLIP_BOUNDS);
+        } else if (input_set_sim_debug_data_mode < 0) {
+            sim_debug_data_mode = None;
+            glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_NONE);
+        }
+        static int reset_counter = 0;
+        if (g_time / 2.3789 > (float) reset_counter) {
+            float k = TAU*100;
+            sim_debug_reset_velocity_field(k*(g_time+1), k*(g_time+2), k*(g_time+3));
+            reset_counter += 1;
+        }
+
+        float azimuth_offset = TAU/5.0 * g_time;
+        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth+azimuth_offset);
+        // mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
+        mat4 camera = glm::perspective(1.0f, 1680.0f/1024.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
-        update_density_field_accelerated((float*) density_field, (float) time);
+        sim_update(0.1);
 
-        glTexImage3D(
-            GL_TEXTURE_3D, 0, GL_R16F,
-            GRID_SIZE, GRID_SIZE, GRID_SIZE, 0,
-            GL_RED, GL_FLOAT, density_field
-        );
-        // glGenerateMipmap(GL_TEXTURE_3D);
-
-        glClearColor(0.0, 0.0, 0.0, 1.0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIgT);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glDrawElements(GL_TRIANGLES, 3*6*2, GL_UNSIGNED_BYTE, CUBE_INDICES);
 
@@ -314,6 +348,6 @@ void main() {
     }
 
     // CLEANUP
-    end_accelerated_simulation();
+    sim_terminate();
     glfwTerminate();
 }
