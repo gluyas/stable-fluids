@@ -3,6 +3,9 @@
 #define TAU  6.28318530717958647692
 #define TAUf 6.28318530717958647692f
 
+#define DEGREES  (TAU  / 360.0)
+#define DEGREESf (TAUf / 360.0f)
+
 #define SIM_GRID_SIZE  128
 #define SIM_GRID_SCALE 2.0
 

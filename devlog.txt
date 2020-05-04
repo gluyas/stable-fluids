@@ -34,3 +34,8 @@ This was causing a lot of weird bugs I chalked up to FP mishandling/precision, b
 I've also clarified the treatment of velocities in the simulation: velcoities are stored in terms of texture space per second, and are scaled to world space on simulation input/output.
 In future, when I set a fixed dt, I will change the internal unit to texture space per frame.
 The advection is now MUCH more stable and more fluid-y, and should actually be sufficient for the MVP (the same first order method is actually used in one of the GPU Gems samples).
+
+05/05
+Imgui integration.
+This adds a little menu which can configure some of the simualation / rendering parameters.
+Should be extendable in future to accomodate further needs.

@@ -50,36 +50,38 @@ void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
-const float debug_max_velocity = 1.0;
-const float debug_render_velocity_threshold_base = debug_max_velocity / 2.0;
-const float debug_render_velocity_threshold_incr = debug_render_velocity_threshold_base / 10.0;
+bool debug_menu = false;
+float debug_max_velocity = 1.0;
+float debug_delta_time   = 1.0/30.0;
+float debug_render_velocity_threshold = debug_max_velocity / 2;
 
-// TODO: this is nasty and will scale badly
-int   input_set_sim_debug_data_mode = 0;
-float input_mod_debug_render_velocity_threshold = debug_render_velocity_threshold_base;
-bool  input_do_debug_reset_velocity_field = true;
-bool  input_do_debug_reset_density_field = true;
+// KEYBOARD INPUT
+
+bool input_do_debug_reset_velocity_field = true;
+bool input_do_debug_reset_density_field = true;
+
+SimDebugDataMode input_set_sim_debug_data_mode = sim_debug_data_mode;
 
 void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureKeyboard) return;
+
     switch (key) {
-    case GLFW_KEY_MINUS:
-        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold -= debug_render_velocity_threshold_incr;
+    case GLFW_KEY_1:
+        input_set_sim_debug_data_mode = None;
         break;
-    case GLFW_KEY_EQUAL:
-        if (action == GLFW_PRESS) input_mod_debug_render_velocity_threshold += debug_render_velocity_threshold_incr;
+    case GLFW_KEY_2:
+        input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
         break;
     case GLFW_KEY_SPACE:
         if (action == GLFW_PRESS) {
             float k = TAU*100;
-            if (mods & GLFW_MOD_CONTROL) input_do_debug_reset_velocity_field = true;
+            input_do_debug_reset_velocity_field = true;
             input_do_debug_reset_density_field = true;
         }
         break;
     case GLFW_KEY_GRAVE_ACCENT:
-        if (action == GLFW_PRESS) {
-            if (sim_debug_data_mode) input_set_sim_debug_data_mode = -1;
-            else                     input_set_sim_debug_data_mode =  1;
-        }
+        if (action == GLFW_PRESS) debug_menu = !debug_menu;
         break;
     case GLFW_KEY_ESCAPE:
         if (action == GLFW_PRESS) glfwSetWindowShouldClose(window, GLFW_TRUE);
@@ -87,12 +89,47 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
     }
 }
 
+// MOUSE INPUT
+
+double input_cursor_xpos_prev = 0;
+double input_cursor_ypos_prev = 0;
+double input_cursor_xpos_delta = 0;
+double input_cursor_ypos_delta = 0;
+
+bool input_mouse_dragging_camera = false;
+
 void glfw_cursor_pos_callback(GLFWwindow* window, double xpos, double ypos) {
+    input_cursor_xpos_delta = xpos - input_cursor_xpos_prev;
+    input_cursor_ypos_delta = ypos - input_cursor_ypos_prev;
+    input_cursor_xpos_prev = xpos;
+    input_cursor_ypos_prev = ypos;
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) return;
+
     int width, height;
     glfwGetWindowSize(window, &width, &height);
-    vec2 normalized = vec2(xpos / float(width-1), ypos / float(height-1));
-    g_camera_azimuth   = TAU * normalized.x;
-    g_camera_elevation = TAU / 4.0 * 2.0*(normalized.y - 0.5);
+    if (input_mouse_dragging_camera) {
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        vec2 normalized = vec2(input_cursor_xpos_delta / float(width-1), input_cursor_ypos_delta / float(height-1));
+        g_camera_azimuth   -= TAU * normalized.x;
+        g_camera_elevation += TAU / 4.0 * 2.0*(normalized.y);
+        g_camera_elevation = fmin(fmax(g_camera_elevation, -85*DEGREES), 85*DEGREES);
+    }
+}
+
+void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    ImGuiIO& io = ImGui::GetIO();
+
+    if (button == GLFW_MOUSE_BUTTON_1) {
+        if (action == GLFW_PRESS && !io.WantCaptureMouse) {
+            input_mouse_dragging_camera = true;
+        } else if (action == GLFW_RELEASE) {
+            input_mouse_dragging_camera = false;
+            g_camera_azimuth = glm::mod(g_camera_azimuth + TAU/2, TAU) - TAU/2;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+    }
 }
 
 void gl_delete_program_and_attached_shaders(GLuint program) {
@@ -236,6 +273,7 @@ void main() {
 
     glfwSetKeyCallback(window, glfw_key_callback);
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
+    glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
@@ -289,9 +327,9 @@ void main() {
     UNIFORM(program, u_debug_data_volume);
     glUniform1i(u_debug_data_volume, 1);
 
-    // TODO: add GUI controls for debug visuals
     UNIFORM(program, u_debug_render_flags);
     UNIFORM(program, u_debug_render_velocity_threshold);
+    glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
     UNIFORM(program, u_debug_render_clip_bounds);
 
     ATTRIBUTE(program, a_pos);
@@ -317,8 +355,6 @@ void main() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
@@ -345,36 +381,97 @@ void main() {
             glUniform1d(u_time, g_time);
         }
 
-        // UPDATE DEBUG VISUALIZATIONS
-        if (input_do_debug_reset_density_field) {
-            sim_debug_reset_density_field(1.0, 100*g_time);
-            input_do_debug_reset_density_field = false;
-        }
-        if (input_do_debug_reset_velocity_field) {
-            float k = TAU*100;
-            sim_debug_reset_velocity_field(debug_max_velocity, k*(g_time+1), k*(g_time+2), k*(g_time+3));
-            input_do_debug_reset_velocity_field = false;
-        }
-        if (input_set_sim_debug_data_mode > 0) {
-            sim_debug_data_mode = NormalizedVelocityAndMagnitude;
-            glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_VELOCITIES | DEBUG_RENDER_FLAG_CLIP_BOUNDS);
-        } else if (input_set_sim_debug_data_mode < 0) {
-            sim_debug_data_mode = None;
-            glUniform1i(u_debug_render_flags, DEBUG_RENDER_FLAG_NONE);
-        }
-        if (input_mod_debug_render_velocity_threshold) {
-            static float threshold = 0.0;
-            threshold = fmax(threshold + input_mod_debug_render_velocity_threshold, 0.0);
-            glUniform1f(u_debug_render_velocity_threshold, threshold);
-            input_mod_debug_render_velocity_threshold = 0.0;
-        }
-
-        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, g_camera_elevation), g_camera_azimuth);
+        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, -g_camera_elevation), g_camera_azimuth);
         mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
-        sim_update(0.0333333);
+        static unsigned int debug_render_flags = DEBUG_RENDER_FLAG_NONE;
+        bool         update_debug_render_flags = false;
+
+        if (debug_menu) {
+            // ImGui::ShowDemoWindow();
+
+            ImGui::Begin("Debug Menu");
+
+            ImGui::Text("Camera");
+            ImGui::SliderAngle("elevation", &g_camera_elevation, -85, 85);
+            ImGui::SliderAngle("azimuth", &g_camera_azimuth);
+            ImGui::Separator();
+
+            ImGui::Text("Simulation");
+            static float debug_delta_time_ms = debug_delta_time * 1000.0;
+            if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000/15.0f, "%.3f ms", 1.0)) {
+                debug_delta_time = debug_delta_time_ms / 1000.0;
+            }
+            static float input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
+            if (ImGui::SliderFloat("max velocity", &debug_max_velocity, 0.0f, 10.0f, "%.3f m/s", 1.0)) {
+                debug_render_velocity_threshold = debug_max_velocity*input_velocity_threshold_fraction;
+                glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
+            }
+            ImGui::Separator();
+
+            ImGui::Text("Rendering");
+
+            // velocity field
+            if (ImGui::RadioButton("default", input_set_sim_debug_data_mode == None)) {
+                input_set_sim_debug_data_mode = None;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("velocity field", input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude)) {
+                input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
+            }
+            if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude) {
+                if (ImGui::SliderFloat("velocity render threshold", &debug_render_velocity_threshold, 0.0f, debug_max_velocity, "%.3f", 1.0)) {
+                    input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
+                    glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
+                }
+            }
+
+            // clip bounds
+            static vec3 debug_render_clip_bounds[2] = {-VEC3_1, VEC3_1};
+            if (ImGui::CheckboxFlags("enable clip bounds", &debug_render_flags, DEBUG_RENDER_FLAG_CLIP_BOUNDS)) update_debug_render_flags = true;
+            if (debug_render_flags & DEBUG_RENDER_FLAG_CLIP_BOUNDS) {
+                bool update_debug_render_clip_bounds = false;
+                if (ImGui::SliderFloat3("clip upper bound", (float*) &debug_render_clip_bounds[1], -1, 1)) update_debug_render_clip_bounds = true;
+                if (ImGui::SliderFloat3("clip lower bound", (float*) &debug_render_clip_bounds[0], -1, 1)) update_debug_render_clip_bounds = true;
+                if (update_debug_render_clip_bounds) {
+                    glUniformMatrix2x3fv(u_debug_render_clip_bounds, 1, GL_FALSE, (GLfloat*) &debug_render_clip_bounds);
+                }
+            }
+            ImGui::Separator();
+
+            ImGui::End();
+        }
+
+        if (input_do_debug_reset_density_field) {
+            sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));
+            input_do_debug_reset_density_field = false;
+        }
+        if (input_do_debug_reset_velocity_field) {
+            double k = TAU*100;
+            sim_debug_reset_velocity_field(debug_max_velocity, k*(g_time+1), k*(g_time+2), k*(g_time+3));
+            input_do_debug_reset_velocity_field = false;
+        }
+        if (input_set_sim_debug_data_mode != sim_debug_data_mode) {
+            switch (input_set_sim_debug_data_mode) {
+            case None:
+                debug_render_flags &= !DEBUG_RENDER_FLAG_VELOCITIES;
+                break;
+            case NormalizedVelocityAndMagnitude:
+                debug_render_flags |= DEBUG_RENDER_FLAG_VELOCITIES;
+                break;
+            }
+            sim_debug_data_mode = input_set_sim_debug_data_mode;
+            update_debug_render_flags = true;
+        }
+        if (update_debug_render_flags) {
+            glUniform1i(u_debug_render_flags, debug_render_flags);
+            update_debug_render_flags = false;
+        }
+
+        // SIM UPDATE
+        sim_update(debug_delta_time);
 
         // RENDER
 
