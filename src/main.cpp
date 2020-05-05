@@ -37,7 +37,7 @@ const vec3 CUBE_VERTS[8] = {
     vec3(-1.0, -1.0, -1.0),
 };
 
-const uint8_t CUBE_INDICES[6*2*3] = {
+const uint8_t CUBE_FACE_INDICES[6*2*3] = {
     0, 1, 3,  3, 2, 0,
     0, 2, 6,  6, 4, 0,
     0, 4, 5,  5, 1, 0,
@@ -46,14 +46,19 @@ const uint8_t CUBE_INDICES[6*2*3] = {
     7, 6, 2,  2, 3, 7
 };
 
+const uint8_t CUBE_OUTLINE_INDICES[16] = {
+    0, 1, 3, 2, 0, 4, 5, 1, 5, 7, 3, 7, 6, 2, 6, 4
+};
+
 void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
-bool debug_menu = false;
+bool  debug_menu = false;
 float debug_max_velocity = 1.0;
 float debug_delta_time   = 1.0/30.0;
 float debug_render_velocity_threshold = debug_max_velocity / 2;
+bool  debug_render_boundaries = false;
 
 // KEYBOARD INPUT
 
@@ -68,10 +73,13 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
 
     switch (key) {
     case GLFW_KEY_1:
-        input_set_sim_debug_data_mode = None;
+        if (action == GLFW_PRESS) input_set_sim_debug_data_mode = None;
         break;
     case GLFW_KEY_2:
-        input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
+        if (action == GLFW_PRESS) input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
+        break;
+    case GLFW_KEY_B:
+        if (action == GLFW_PRESS) debug_render_boundaries = !debug_render_boundaries;
         break;
     case GLFW_KEY_SPACE:
         if (action == GLFW_PRESS) {
@@ -327,7 +335,7 @@ void main() {
     UNIFORM(program, u_debug_data_volume);
     glUniform1i(u_debug_data_volume, 1);
 
-    UNIFORM(program, u_debug_render_flags);
+    UNIFORM(program, u_debug_render_mode_and_flags);
     UNIFORM(program, u_debug_render_velocity_threshold);
     glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
     UNIFORM(program, u_debug_render_clip_bounds);
@@ -350,6 +358,9 @@ void main() {
     glClearColor(0.0, 0.0, 0.0, 1.0);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // INIT IMGUI
     IMGUI_CHECKVERSION();
@@ -386,8 +397,8 @@ void main() {
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
-        static unsigned int debug_render_flags = DEBUG_RENDER_FLAG_NONE;
-        bool         update_debug_render_flags = false;
+        static unsigned int debug_render_mode_and_flags = DEBUG_RENDER_FLAG_NONE;
+        bool         update_debug_render_mode_and_flags = false;
 
         if (debug_menu) {
             // ImGui::ShowDemoWindow();
@@ -401,7 +412,7 @@ void main() {
 
             ImGui::Text("Simulation");
             static float debug_delta_time_ms = debug_delta_time * 1000.0;
-            if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000/15.0f, "%.3f ms", 1.0)) {
+            if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000.0/7.5, "%.3f ms", 2.0)) {
                 debug_delta_time = debug_delta_time_ms / 1000.0;
             }
             static float input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
@@ -422,21 +433,42 @@ void main() {
                 input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
             }
             if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude) {
-                if (ImGui::SliderFloat("velocity render threshold", &debug_render_velocity_threshold, 0.0f, debug_max_velocity, "%.3f", 1.0)) {
+                if (ImGui::SliderFloat("velocity render threshold", &debug_render_velocity_threshold, 0.0f, debug_max_velocity, "%.3f", 0.5)) {
                     input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
                     glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
                 }
             }
 
             // clip bounds
-            static vec3 debug_render_clip_bounds[2] = {-VEC3_1, VEC3_1};
-            if (ImGui::CheckboxFlags("enable clip bounds", &debug_render_flags, DEBUG_RENDER_FLAG_CLIP_BOUNDS)) update_debug_render_flags = true;
-            if (debug_render_flags & DEBUG_RENDER_FLAG_CLIP_BOUNDS) {
+            ImGui::Checkbox("show boundaries", &debug_render_boundaries);
+            static int debug_render_clip_bounds_interleaved[6] = {0,SIM_GRID_SIZE, 0,SIM_GRID_SIZE, 0,SIM_GRID_SIZE};
+            if (ImGui::CheckboxFlags("enable clip bounds", &debug_render_mode_and_flags, DEBUG_RENDER_FLAG_CLIP_BOUNDS)) update_debug_render_mode_and_flags = true;
+            if (debug_render_mode_and_flags & DEBUG_RENDER_FLAG_CLIP_BOUNDS) {
                 bool update_debug_render_clip_bounds = false;
-                if (ImGui::SliderFloat3("clip upper bound", (float*) &debug_render_clip_bounds[1], -1, 1)) update_debug_render_clip_bounds = true;
-                if (ImGui::SliderFloat3("clip lower bound", (float*) &debug_render_clip_bounds[0], -1, 1)) update_debug_render_clip_bounds = true;
+                if (ImGui::Button("reset##x clip")) {
+                    debug_render_clip_bounds_interleaved[0] = 0; debug_render_clip_bounds_interleaved[1] = SIM_GRID_SIZE;
+                    update_debug_render_clip_bounds = true;
+                } ImGui::SameLine();
+                if (ImGui::SliderInt2("x clip", &debug_render_clip_bounds_interleaved[0], 0, SIM_GRID_SIZE)) update_debug_render_clip_bounds = true;
+
+                if (ImGui::Button("reset##y clip")) {
+                    debug_render_clip_bounds_interleaved[2] = 0; debug_render_clip_bounds_interleaved[3] = SIM_GRID_SIZE;
+                    update_debug_render_clip_bounds = true;
+                } ImGui::SameLine();
+                if (ImGui::SliderInt2("y clip", &debug_render_clip_bounds_interleaved[2], 0, SIM_GRID_SIZE)) update_debug_render_clip_bounds = true;
+
+                if (ImGui::Button("reset##z clip")) {
+                    debug_render_clip_bounds_interleaved[4] = 0; debug_render_clip_bounds_interleaved[5] = SIM_GRID_SIZE;
+                    update_debug_render_clip_bounds = true;
+                } ImGui::SameLine();
+                if (ImGui::SliderInt2("z clip", &debug_render_clip_bounds_interleaved[4], 0, SIM_GRID_SIZE)) update_debug_render_clip_bounds = true;
+
                 if (update_debug_render_clip_bounds) {
-                    glUniformMatrix2x3fv(u_debug_render_clip_bounds, 1, GL_FALSE, (GLfloat*) &debug_render_clip_bounds);
+                    int debug_render_clip_bounds[6] = {
+                        debug_render_clip_bounds_interleaved[0], debug_render_clip_bounds_interleaved[2], debug_render_clip_bounds_interleaved[4],
+                        debug_render_clip_bounds_interleaved[1], debug_render_clip_bounds_interleaved[3], debug_render_clip_bounds_interleaved[5],
+                    };
+                    glUniform3iv(u_debug_render_clip_bounds, 2, debug_render_clip_bounds);
                 }
             }
             ImGui::Separator();
@@ -454,29 +486,38 @@ void main() {
             input_do_debug_reset_velocity_field = false;
         }
         if (input_set_sim_debug_data_mode != sim_debug_data_mode) {
+            debug_render_mode_and_flags &= ~DEBUG_RENDER_MODE_MASK;
             switch (input_set_sim_debug_data_mode) {
             case None:
-                debug_render_flags &= !DEBUG_RENDER_FLAG_VELOCITIES;
+                debug_render_mode_and_flags |= DEBUG_RENDER_MODE_DEFAULT;
                 break;
             case NormalizedVelocityAndMagnitude:
-                debug_render_flags |= DEBUG_RENDER_FLAG_VELOCITIES;
+                debug_render_mode_and_flags |= DEBUG_RENDER_MODE_VELOCITIES;
                 break;
             }
             sim_debug_data_mode = input_set_sim_debug_data_mode;
-            update_debug_render_flags = true;
+            update_debug_render_mode_and_flags = true;
         }
-        if (update_debug_render_flags) {
-            glUniform1i(u_debug_render_flags, debug_render_flags);
-            update_debug_render_flags = false;
+        if (update_debug_render_mode_and_flags) {
+            glUniform1i(u_debug_render_mode_and_flags, debug_render_mode_and_flags);
+            update_debug_render_mode_and_flags = false;
         }
 
         // SIM UPDATE
         sim_update(debug_delta_time);
 
         // RENDER
-
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glDrawElements(GL_TRIANGLES, 3*6*2, GL_UNSIGNED_BYTE, CUBE_INDICES);
+
+        // volume outline
+        if (debug_render_boundaries) {
+            glUniform1i(u_debug_render_mode_and_flags, debug_render_mode_and_flags & ~DEBUG_RENDER_MODE_MASK | DEBUG_RENDER_MODE_AXIS_COLOR);
+            glDrawElements(GL_LINE_STRIP, 16, GL_UNSIGNED_BYTE, CUBE_OUTLINE_INDICES);
+            glUniform1i(u_debug_render_mode_and_flags, debug_render_mode_and_flags);
+        }
+
+        // simulation
+        glDrawElements(GL_TRIANGLES, 3*6*2, GL_UNSIGNED_BYTE, CUBE_FACE_INDICES);
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

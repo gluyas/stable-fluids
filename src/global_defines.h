@@ -9,7 +9,12 @@
 #define SIM_GRID_SIZE  128
 #define SIM_GRID_SCALE 2.0
 
-#define DEBUG_RENDER_FLAG_NONE        0x0
-#define DEBUG_RENDER_FLAG_CLIP_BOUNDS 0x1
-#define DEBUG_RENDER_FLAG_VELOCITIES  0x2
+// lower byte encodes render mode
+#define DEBUG_RENDER_MODE_MASK        0x00FF
+#define DEBUG_RENDER_MODE_DEFAULT     0x0000
+#define DEBUG_RENDER_MODE_VELOCITIES  0x0001
+#define DEBUG_RENDER_MODE_AXIS_COLOR  0x0002
+// upper byte encodes render flags
+#define DEBUG_RENDER_FLAG_NONE        0x0000
+#define DEBUG_RENDER_FLAG_CLIP_BOUNDS 0x0100
 

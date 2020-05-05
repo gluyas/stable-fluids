@@ -1,5 +1,4 @@
 DEBUG FEATURES:
-- gui for controlling debug view
 - frame stepping / rewinding
 
 SIMULATION:

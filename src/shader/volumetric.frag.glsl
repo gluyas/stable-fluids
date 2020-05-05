@@ -11,8 +11,12 @@ out vec4 gl_FragColor;
 void debug_render_velocities();
 
 void main() {
-    if ((u_debug_render_flags & DEBUG_RENDER_FLAG_VELOCITIES) != 0) {
+    switch(u_debug_render_mode_and_flags & DEBUG_RENDER_MODE_MASK) {
+    case DEBUG_RENDER_MODE_VELOCITIES:
         debug_render_velocities();
+        return;
+    case DEBUG_RENDER_MODE_AXIS_COLOR:
+        gl_FragColor = vec4((v_pos + 1.0)/2.0, 1.0);
         return;
     }
 
@@ -31,9 +35,9 @@ void main() {
         }
 
         sample_point += sample_step;
-        if (!in_texture_bounds(sample_point)) break;
+        if (!in_bounds(sample_point)) break;
     }
-    if (i < INTEGRATOR_MAX_ITERATIONS) gl_FragColor = vec4(vec3(integral), 1.0);
+    if (i < INTEGRATOR_MAX_ITERATIONS) gl_FragColor = vec4(vec3(1), integral);
     else                               gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
 }
 
@@ -58,5 +62,5 @@ void debug_render_velocities() {
         u  += v*t;
         ud += vd*ivec3(step(-t, -tmax));
     }
-    gl_FragColor = vec4(0.0);
+    discard;
 }
