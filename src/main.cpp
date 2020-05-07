@@ -15,10 +15,6 @@
 #include "math_prelude.hpp"
 #include "simulation.hpp"
 
-extern "C" {
-_declspec(dllexport) uint64_t NvOptimusEnablement = 0x00000001;
-}
-
 double g_time = 0.0;
 double g_delta_time;
 
@@ -392,13 +388,10 @@ void main() {
             glUniform1d(u_time, g_time);
         }
 
-        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, -g_camera_elevation), g_camera_azimuth);
-        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
-        glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
-        glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
-
         static unsigned int debug_render_mode_and_flags = DEBUG_RENDER_FLAG_NONE;
         bool         update_debug_render_mode_and_flags = false;
+
+        static float debug_camera_auto_rotate = 0.0;
 
         if (debug_menu) {
             // ImGui::ShowDemoWindow();
@@ -407,7 +400,9 @@ void main() {
 
             ImGui::Text("Camera");
             ImGui::SliderAngle("elevation", &g_camera_elevation, -85, 85);
-            ImGui::SliderAngle("azimuth", &g_camera_azimuth);
+            bool set_azimuth = ImGui::SliderAngle("azimuth", &g_camera_azimuth);
+            ImGui::SliderAngle("auto rotation", &debug_camera_auto_rotate, -180, 180, "%.0f deg/s");
+            if (set_azimuth) debug_camera_auto_rotate = 0.0;
             ImGui::Separator();
 
             ImGui::Text("Simulation");
@@ -475,6 +470,16 @@ void main() {
 
             ImGui::End();
         }
+
+        if (debug_camera_auto_rotate) {
+            g_camera_azimuth += debug_camera_auto_rotate * debug_delta_time;
+            g_camera_azimuth = glm::mod(g_camera_azimuth + TAU/2, TAU) - TAU/2;
+        }
+        vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, -g_camera_elevation), g_camera_azimuth);
+        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
+        glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
+        glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
+
 
         if (input_do_debug_reset_density_field) {
             sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));
