@@ -22,6 +22,9 @@ float g_camera_elevation = 0.0;
 float g_camera_azimuth   = 0.0;
 float g_camera_distance  = 3.0;
 
+const float camera_near_clip    = 0.01f;
+const float camera_min_distance = sqrt(3) + 2*camera_near_clip;
+
 const vec3 CUBE_VERTS[8] = {
     vec3( 1.0,  1.0,  1.0),
     vec3(-1.0,  1.0,  1.0),
@@ -134,6 +137,14 @@ void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int 
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
     }
+}
+
+void glfw_scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) return;
+
+    g_camera_distance *= pow(1.1, -yoffset);
+    g_camera_distance = max(camera_min_distance, g_camera_distance);
 }
 
 void gl_delete_program_and_attached_shaders(GLuint program) {
@@ -278,6 +289,7 @@ void main() {
     glfwSetKeyCallback(window, glfw_key_callback);
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
     glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
+    glfwSetScrollCallback(window, glfw_scroll_callback);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
@@ -401,6 +413,8 @@ void main() {
             ImGui::Text("Camera");
             ImGui::SliderAngle("elevation", &g_camera_elevation, -85, 85);
             bool set_azimuth = ImGui::SliderAngle("azimuth", &g_camera_azimuth);
+            // TODO: allow going inside the rendered volume
+            ImGui::SliderFloat("distace", &g_camera_distance, camera_min_distance, 10.0, "%.3f", 3.0);
             ImGui::SliderAngle("auto rotation", &debug_camera_auto_rotate, -180, 180, "%.0f deg/s");
             if (set_azimuth) debug_camera_auto_rotate = 0.0;
             ImGui::Separator();
@@ -476,7 +490,7 @@ void main() {
             g_camera_azimuth = glm::mod(g_camera_azimuth + TAU/2, TAU) - TAU/2;
         }
         vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, -g_camera_elevation), g_camera_azimuth);
-        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, 0.01f, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
+        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, camera_near_clip, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
