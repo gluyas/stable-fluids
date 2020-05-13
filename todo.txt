@@ -2,11 +2,17 @@ DEBUG FEATURES:
 - frame stepping / rewinding
 
 SIMULATION:
+- correct handling of pressure field
+- external forces
+- boundary conditions
+- generate good initial conditions
 - higher order advection term (particle tracer)
-- use unfiltered texture fetches and do trilinear filtering in kernel code?
 - better defined frame-update loop
 - framerate independence
 - seperate kernel for boundary elements
 
 PERFORMANCE:
+- profile!
+    - then probably optimize poisson solver
+- asynchronous sim update procedure (may cause issues with GL)
 - choose a good kernel block size (expect something like 16,16,1)

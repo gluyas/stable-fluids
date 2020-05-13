@@ -424,6 +424,7 @@ void main() {
             if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000.0/7.5, "%.3f ms", 2.0)) {
                 debug_delta_time = debug_delta_time_ms / 1000.0;
             }
+            ImGui::SliderInt("pressure projection iterations", &sim_pressure_project_iterations, 0, 128);
             static float input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
             if (ImGui::SliderFloat("max velocity", &debug_max_velocity, 0.0f, 10.0f, "%.3f m/s", 1.0)) {
                 debug_render_velocity_threshold = debug_max_velocity*input_velocity_threshold_fraction;

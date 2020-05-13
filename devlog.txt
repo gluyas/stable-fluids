@@ -39,3 +39,11 @@ The advection is now MUCH more stable and more fluid-y, and should actually be s
 Imgui integration.
 This adds a little menu which can configure some of the simualation / rendering parameters.
 Should be extendable in future to accomodate further needs.
+
+14/05
+Initial pressure solver.
+This seems to be the turning point where the fluid sim really starts to feel like a fluid!
+As expected, the mutliple Jacobi iteration kernels are expensive: 16 iterations is about the best that still manages real-time on my hardware.
+I'm not entirely confident in the correctness: every frame I set the pressure field to zero, which drastically improves the stability of the simulation.
+I'm unsure about whether this is the correct handling of the pressure field, or if this means that the solver is incorrect, or if I just need to choose more reasonable initial conditions.
+In any case, this is a big step!

@@ -8,7 +8,11 @@
 
 #define GRID_SIZE SIM_GRID_SIZE
 #define GRID_ELEMENTS (GRID_SIZE*GRID_SIZE*GRID_SIZE)
-#define BLOCK_SIZE 8
+
+// operate kernels on 16x16 sheets
+static_assert(GRID_SIZE % 16 == 0, "SIM_GRID_SIZE must be a multiple of 16");
+#define BLOCK_DIM  dim3(GRID_SIZE/16, GRID_SIZE/16, GRID_SIZE)
+#define THREAD_DIM dim3(16, 16, 1)
 
 #define DENSITY_TEXTURE_SIZE (GRID_ELEMENTS*sizeof(float))
 
@@ -23,22 +27,10 @@ inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=
     }
 }
 
-long sim_frame_counter = 0;
-// tick on even frames: read from tick buffer, write to tock buffer
-__host__
-inline bool sim_frame_is_tick() {
-    return sim_frame_counter % 2 == 0;
-}
-// tock on odd frames:  read from tock buffer, write to tick buffer
-__host__
-inline bool sim_frame_is_tock() {
-    return sim_frame_counter % 2 != 0;
-}
-
 void set_volume_texture_parameters(textureReference* texture) {
     texture->normalized = true;
     texture->filterMode = cudaFilterModeLinear;
-    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeBorder;
+    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeWrap;
     texture->minMipmapLevelClamp = texture->maxMipmapLevelClamp = 0.0;
     texture->mipmapFilterMode = cudaFilterModePoint;
 }
@@ -82,25 +74,40 @@ cudaArray_t d_velocity_tick_array;
 cudaArray_t d_velocity_tock_array;
 
 // kernel read/write targets
-// backing arrays are swapped between tick and tock
 surface<void,   cudaSurfaceType3D>                          d_velocity_write_surface;
 texture<float4, cudaTextureType3D, cudaReadModeElementType> d_velocity_read_texture;
-// TODO: find a use for the 4th velocity component
 
 // DEBUG DATA FIELD
-// TODO: elide in release builds
-SimDebugDataMode sim_debug_data_mode            = None;
-SimDebugDataMode sim_debug_data_mode_prev_frame = None;
-__constant__
-SimDebugDataMode d_debug_data_mode;
-
 // OpenGL interop
 GLuint                 gl_debug_data_texture;
 cudaGraphicsResource_t gl_debug_data_texture_resource;
 
+// surface reference
 surface<void, cudaSurfaceType3D> d_debug_data_write_surface;
 
+// output parameters
+SimDebugDataMode sim_debug_data_mode = None;
+
+// SIMULATION PARAMETERS
+
+int sim_pressure_project_iterations = 16;
+
 // INITIALIZATION
+
+// call AFTER update double-buffered state
+__host__
+void sim_swap_buffers() {
+    static bool tick = false;
+    tick = !tick;
+
+    if (tick) {
+        cudaCheckErrors(cudaBindTextureToArray(d_velocity_read_texture,  d_velocity_tick_array));
+        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tock_array));
+    } else {
+        cudaCheckErrors(cudaBindTextureToArray(d_velocity_read_texture,  d_velocity_tock_array));
+        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tick_array));
+    }
+}
 
 __host__
 void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit) {
@@ -147,21 +154,6 @@ void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit) {
     ));
     set_volume_texture_parameters(&d_density_read_texture);
 
-
-    // CUDA-HOSTED VELOCITY FIELD BUFFERS
-    cudaChannelFormatDesc velocity_format = cudaCreateChannelDesc<float4>();
-    cudaExtent velocity_extent = make_cudaExtent(GRID_SIZE, GRID_SIZE, GRID_SIZE);
-    cudaCheckErrors(cudaMalloc3DArray(
-        &d_velocity_tick_array, &velocity_format, velocity_extent,
-        cudaArraySurfaceLoadStore
-    ));
-    cudaCheckErrors(cudaMalloc3DArray(
-        &d_velocity_tock_array, &velocity_format, velocity_extent,
-        cudaArraySurfaceLoadStore
-    ));
-    set_volume_texture_parameters(&d_velocity_read_texture);
-
-
     // OPENGL-HOSTED DEBUG TEXTURE
     glActiveTexture(debug_data_texture_unit);
     glGenTextures(1, &gl_debug_data_texture);
@@ -192,6 +184,22 @@ void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit) {
         cudaGraphicsRegisterFlagsSurfaceLoadStore
     ));
     glActiveTexture(0);
+
+    // CUDA-HOSTED VELOCITY FIELD BUFFERS
+    cudaChannelFormatDesc velocity_format = cudaCreateChannelDesc<float4>();
+    cudaExtent velocity_extent = make_cudaExtent(GRID_SIZE, GRID_SIZE, GRID_SIZE);
+    cudaCheckErrors(cudaMalloc3DArray(
+        &d_velocity_tick_array, &velocity_format, velocity_extent,
+        cudaArraySurfaceLoadStore
+    ));
+    cudaCheckErrors(cudaMalloc3DArray(
+        &d_velocity_tock_array, &velocity_format, velocity_extent,
+        cudaArraySurfaceLoadStore
+    ));
+    set_volume_texture_parameters(&d_velocity_read_texture);
+
+    // initialize double buffers by calling sim_swap_buffers
+    sim_swap_buffers();
 }
 
 __host__
@@ -256,7 +264,36 @@ void sim_unmap_gl_debug_data() {
 // API FUNCTIONS & KERNELS
 
 __global__
-void sim_update_kernel(double dt) {
+void sim_pressure_project_jacobi_iteration_kernel() {
+    int x = blockIdx.x*blockDim.x + threadIdx.x;
+    int y = blockIdx.y*blockDim.y + threadIdx.y;
+    int z = blockIdx.z*blockDim.z + threadIdx.z;
+
+    const float d = 1.0 / GRID_SIZE;
+    float px = ((float) x + 0.5) * d;
+    float py = ((float) y + 0.5) * d;
+    float pz = ((float) z + 0.5) * d;
+
+    // TODO: compare performance of texture fetch and surface read
+    float4 vc = tex3D(d_velocity_read_texture, px,   py,   pz);
+    float4 vl = tex3D(d_velocity_read_texture, px-d, py,   pz);
+    float4 vr = tex3D(d_velocity_read_texture, px+d, py,   pz);
+    float4 vb = tex3D(d_velocity_read_texture, px,   py-d, pz);
+    float4 vf = tex3D(d_velocity_read_texture, px,   py+d, pz);
+    float4 vd = tex3D(d_velocity_read_texture, px,   py,   pz-d);
+    float4 vu = tex3D(d_velocity_read_texture, px,   py,   pz+d);
+
+    float  u_div  = (vr.x-vl.x + vf.y-vb.y + vu.z-vd.z) * 0.5;
+    float  p_out  = (vl.w+vr.w+vb.w+vf.w+vd.w+vu.w - u_div) * (1.0/6.0);
+
+    float3 p_grad = make_float3((vr.w-vl.w)*0.5, (vf.w-vb.w)*0.5, (vu.w-vd.w)*0.5);
+
+    float4 v_out  = make_float4(vc.x-p_grad.x, vc.y-p_grad.y, vc.z-p_grad.z, p_out);
+    surf3Dwrite(v_out, d_velocity_write_surface, sizeof(float4)*x, y, z, cudaBoundaryModeTrap);
+}
+
+__global__
+void sim_advection_kernel(double dt) {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
     int z = blockIdx.z*blockDim.z + threadIdx.z;
@@ -274,18 +311,20 @@ void sim_update_kernel(double dt) {
     float qy = py - v.y*dt;
     float qz = pz - v.z*dt;
 
-    // advection
+    // ADVECTION
     float4 w = tex3D(
         d_velocity_read_texture,
         qx, qy, qz
     );
+    w.w = 0.0; // TODO: correct handling of pressure field?
     surf3Dwrite(
         w, d_velocity_write_surface,
         x*sizeof(float4), y, z,
         cudaBoundaryModeTrap
     );
 
-    // substance transport
+    // SUBSTANCE TRANSPORT
+    // TODO: transport after pressure projection
     float density = tex3D(
         d_density_read_texture,
         qx, qy, qz
@@ -295,26 +334,45 @@ void sim_update_kernel(double dt) {
         x*sizeof(float), y, z,
         cudaBoundaryModeTrap
     );
+}
 
-    // TODO: eliminate conditional by moving debug_data_mode/bool into template?
-    if (d_debug_data_mode) {
-        float4 debug_data;
-        switch (d_debug_data_mode) {
-        case NormalizedVelocityAndMagnitude: {
-            float l = norm3df(v.x, v.y, v.z);
-            debug_data = make_float4(v.x/l, v.y/l, v.z/l, l*GRID_SCALE);
-            break;
-        }
-        default:
-            debug_data = make_float4(NAN, NAN, NAN, NAN);
-            break;
-        }
-        surf3Dwrite(
-            debug_data, d_debug_data_write_surface,
-            x*sizeof(float4), y, z,
-            cudaBoundaryModeTrap
-        );
+__global__
+void sim_update_debug_data_kernel(SimDebugDataMode debug_data_mode) {
+    int x = blockIdx.x*blockDim.x + threadIdx.x;
+    int y = blockIdx.y*blockDim.y + threadIdx.y;
+    int z = blockIdx.z*blockDim.z + threadIdx.z;
+
+    float px = ((float) x + 0.5) / GRID_SIZE;
+    float py = ((float) y + 0.5) / GRID_SIZE;
+    float pz = ((float) z + 0.5) / GRID_SIZE;
+    float4 v = tex3D(d_velocity_read_texture,
+        px, py, pz
+    );
+
+    float4 debug_data;
+    switch (debug_data_mode) {
+    case NormalizedVelocityAndMagnitude: {
+        float l = norm3df(v.x, v.y, v.z);
+        float n = 1.0 / l;
+        debug_data = make_float4(v.x*n, v.y*n, v.z*n, GRID_SCALE*l);
+        break;
     }
+    default:
+        debug_data = make_float4(NAN, NAN, NAN, NAN);
+        break;
+    }
+    surf3Dwrite(
+        debug_data, d_debug_data_write_surface,
+        x*sizeof(float4), y, z,
+        cudaBoundaryModeTrap
+    );
+}
+
+__host__
+void sim_update_debug_data() {
+    sim_map_gl_debug_data();
+    sim_update_debug_data_kernel<<<BLOCK_DIM, THREAD_DIM>>>(sim_debug_data_mode);
+    sim_unmap_gl_debug_data();
 }
 
 // TODO: constant dt
@@ -322,29 +380,19 @@ __host__
 void sim_update(double dt) {
     sim_map_gl_density();
 
-    if (sim_debug_data_mode != sim_debug_data_mode_prev_frame) {
-        cudaMemcpyToSymbol(d_debug_data_mode, &sim_debug_data_mode, sizeof(SimDebugDataMode));
-        sim_debug_data_mode_prev_frame = sim_debug_data_mode;
-    }
-    if (sim_debug_data_mode) sim_map_gl_debug_data();
-    // TODO: function to write debug_data without stepping simulating (to switch views while sim paused)
+    sim_advection_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt);
 
-    // set read and write buffers
-    if (sim_frame_is_tick()) {
-        cudaCheckErrors(cudaBindTextureToArray(d_velocity_read_texture,  d_velocity_tick_array));
-        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tock_array));
-    } else {
-        cudaCheckErrors(cudaBindTextureToArray(d_velocity_read_texture,  d_velocity_tock_array));
-        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tick_array));
+    sim_swap_buffers();
+    for (int i = 0; i < sim_pressure_project_iterations; i++) {
+        sim_pressure_project_jacobi_iteration_kernel<<<BLOCK_DIM, THREAD_DIM>>>();
+        sim_swap_buffers();
     }
 
-    dim3 blocks  = dim3(GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE);
-    dim3 threads = dim3(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
-    sim_update_kernel<<<blocks, threads>>>(dt);
+    if (sim_debug_data_mode) {
+        sim_update_debug_data();
+    }
 
-    if (sim_debug_data_mode) sim_unmap_gl_debug_data();
     sim_unmap_gl_density();
-    sim_frame_counter += 1;
 }
 
 // DEBUG FUNCTIONS
@@ -386,17 +434,11 @@ void sim_debug_reset_velocity_field_kernel(float max_component, float3 time) {
 
 __host__
 void sim_debug_reset_velocity_field(float max_velocity, double tx, double ty, double tz) {
-    // TODO: decide correct buffer to write into
-    if (sim_frame_is_tick()) {
-        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tick_array));
-    } else {
-        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_write_surface, d_velocity_tock_array));
-    }
     float max_component = max_velocity/sqrt(3) / GRID_SCALE;
 
-    dim3 blocks  = dim3(GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE);
-    dim3 threads = dim3(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
-    sim_debug_reset_velocity_field_kernel<<<blocks, threads>>>(max_component, make_float3(tx, ty, tz));
+    sim_debug_reset_velocity_field_kernel<<<BLOCK_DIM, THREAD_DIM>>>(max_component, make_float3(tx, ty, tz));
+    sim_swap_buffers();
+    // TODO: pressure project?
 }
 
 __global__
@@ -432,10 +474,6 @@ void sim_debug_reset_density_field_kernel(float max_density, double time) {
 __host__
 void sim_debug_reset_density_field(float max_density, double t) {
     sim_map_gl_density();
-
-    dim3 blocks  = dim3(GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE, GRID_SIZE/BLOCK_SIZE);
-    dim3 threads = dim3(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
-    sim_debug_reset_density_field_kernel<<<blocks, threads>>>(max_density, t);
-
+    sim_debug_reset_density_field_kernel<<<BLOCK_DIM, THREAD_DIM>>>(max_density, t);
     sim_unmap_gl_density();
 }
