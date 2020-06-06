@@ -47,3 +47,10 @@ As expected, the mutliple Jacobi iteration kernels are expensive: 16 iterations 
 I'm not entirely confident in the correctness: every frame I set the pressure field to zero, which drastically improves the stability of the simulation.
 I'm unsure about whether this is the correct handling of the pressure field, or if this means that the solver is incorrect, or if I just need to choose more reasonable initial conditions.
 In any case, this is a big step!
+
+06/06
+CGRA409: Initial MacCormack method implementation.
+Turns out to be very simple to implement.
+The visual difference between this and the first-order method is not particularly noticable though.
+This method also has obvious numerical instabilities: the common fix is to clamp the result to neighbouring cells, but this seems like it will cost a lot of texture accesses, which could probably be better spent on a stable integrator.
+I will add some interaction features and experiment with this method more, and maybe try out other integrators.

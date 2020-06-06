@@ -292,8 +292,14 @@ void sim_pressure_project_jacobi_iteration_kernel() {
     surf3Dwrite(v_out, d_velocity_write_surface, sizeof(float4)*x, y, z, cudaBoundaryModeTrap);
 }
 
+bool sim_debug_use_basic_advection = false;
 __global__
-void sim_advection_kernel(double dt) {
+void sim_advection_first_order_kernel(double dt);
+
+__global__
+void sim_advection_maccormack_kernel(double dt) {
+    // TODO: unstable at high velocity or dt
+
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
     int z = blockIdx.z*blockDim.z + threadIdx.z;
@@ -301,22 +307,30 @@ void sim_advection_kernel(double dt) {
     float px = ((float) x + 0.5) / GRID_SIZE;
     float py = ((float) y + 0.5) / GRID_SIZE;
     float pz = ((float) z + 0.5) / GRID_SIZE;
-    float4 v = tex3D(
-        d_velocity_read_texture,
-        px, py, pz
-    );
-    // TODO: higher order path integrator to find q
-    // TODO: store velocities as per-frame deltas with a fixed dt
-    float qx = px - v.x*dt;
-    float qy = py - v.y*dt;
-    float qz = pz - v.z*dt;
+    float4 pv = tex3D(d_velocity_read_texture, px, py, pz);
 
     // ADVECTION
-    float4 w = tex3D(
-        d_velocity_read_texture,
-        qx, qy, qz
+    // implements Selle et al. MacCormack method
+
+    // forward advection
+    float qx = px - pv.x*dt;
+    float qy = py - pv.y*dt;
+    float qz = pz - pv.z*dt;
+    float4 qv = tex3D(d_velocity_read_texture, qx, qy, qz);
+
+    // reverse advection
+    float rx = qx + qv.x*dt;
+    float ry = qy + qv.y*dt;
+    float rz = qz + qv.z*dt;
+    float4 rv = tex3D(d_velocity_read_texture, rx, ry, rz);
+
+    // error-compensated final advection
+    float4 w = make_float4(
+        qv.x + 0.5*(pv.x - rv.x),
+        qv.y + 0.5*(pv.y - rv.y),
+        qv.z + 0.5*(pv.z - rv.z),
+        0.0
     );
-    w.w = 0.0; // TODO: correct handling of pressure field?
     surf3Dwrite(
         w, d_velocity_write_surface,
         x*sizeof(float4), y, z,
@@ -324,13 +338,13 @@ void sim_advection_kernel(double dt) {
     );
 
     // SUBSTANCE TRANSPORT
-    // TODO: transport after pressure projection
-    float density = tex3D(
-        d_density_read_texture,
-        qx, qy, qz
-    );
+    // also uses MacCormack method
+    float pd = tex3D(d_density_read_texture, px, py, pz);
+    float qd = tex3D(d_density_read_texture, qx, qy, qz);
+    float rd = tex3D(d_density_read_texture, rx, ry, rz);
+    float d  = qd + 0.5*(pd - rd);
     surf3Dwrite(
-        density, d_density_write_surface,
+        d, d_density_write_surface,
         x*sizeof(float), y, z,
         cudaBoundaryModeTrap
     );
@@ -380,7 +394,8 @@ __host__
 void sim_update(double dt) {
     sim_map_gl_density();
 
-    sim_advection_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt);
+    if (sim_debug_use_basic_advection) sim_advection_first_order_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt);
+    else                               sim_advection_maccormack_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt);
 
     sim_swap_buffers();
     for (int i = 0; i < sim_pressure_project_iterations; i++) {
@@ -476,4 +491,50 @@ void sim_debug_reset_density_field(float max_density, double t) {
     sim_map_gl_density();
     sim_debug_reset_density_field_kernel<<<BLOCK_DIM, THREAD_DIM>>>(max_density, t);
     sim_unmap_gl_density();
+}
+
+// LEGACY CODE
+
+__global__
+void sim_advection_first_order_kernel(double dt) {
+    int x = blockIdx.x*blockDim.x + threadIdx.x;
+    int y = blockIdx.y*blockDim.y + threadIdx.y;
+    int z = blockIdx.z*blockDim.z + threadIdx.z;
+
+    float px = ((float) x + 0.5) / GRID_SIZE;
+    float py = ((float) y + 0.5) / GRID_SIZE;
+    float pz = ((float) z + 0.5) / GRID_SIZE;
+    float4 v = tex3D(
+        d_velocity_read_texture,
+        px, py, pz
+    );
+    // TODO: higher order path integrator to find q
+    // TODO: store velocities as per-frame deltas with a fixed dt
+    float qx = px - v.x*dt;
+    float qy = py - v.y*dt;
+    float qz = pz - v.z*dt;
+
+    // ADVECTION
+    float4 w = tex3D(
+        d_velocity_read_texture,
+        qx, qy, qz
+    );
+    w.w = 0.0; // TODO: correct handling of pressure field?
+    surf3Dwrite(
+        w, d_velocity_write_surface,
+        x*sizeof(float4), y, z,
+        cudaBoundaryModeTrap
+    );
+
+    // SUBSTANCE TRANSPORT
+    // TODO: transport after pressure projection
+    float density = tex3D(
+        d_density_read_texture,
+        qx, qy, qz
+    );
+    surf3Dwrite(
+        density, d_density_write_surface,
+        x*sizeof(float), y, z,
+        cudaBoundaryModeTrap
+    );
 }

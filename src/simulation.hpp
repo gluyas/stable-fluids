@@ -12,6 +12,8 @@ enum SimDebugDataMode {
 };
 extern SimDebugDataMode sim_debug_data_mode;
 
+extern bool sim_debug_use_basic_advection;
+
 void sim_update_debug_data();
 
 void sim_debug_reset_density_field(float max_density, double t);

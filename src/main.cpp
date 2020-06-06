@@ -430,6 +430,7 @@ void main() {
                 debug_render_velocity_threshold = debug_max_velocity*input_velocity_threshold_fraction;
                 glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
             }
+            ImGui::Checkbox("first-order advection", &sim_debug_use_basic_advection);
             ImGui::Separator();
 
             ImGui::Text("Rendering");
@@ -497,12 +498,13 @@ void main() {
 
 
         if (input_do_debug_reset_density_field) {
-            sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));
+            // sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));
+            sim_debug_reset_density_field(debug_max_velocity, 0);
             input_do_debug_reset_density_field = false;
         }
         if (input_do_debug_reset_velocity_field) {
             double k = TAU*100;
-            sim_debug_reset_velocity_field(debug_max_velocity, k*(g_time+1), k*(g_time+2), k*(g_time+3));
+            sim_debug_reset_velocity_field(debug_max_velocity, 0, 0, 0);
             input_do_debug_reset_velocity_field = false;
         }
         if (input_set_sim_debug_data_mode != sim_debug_data_mode) {
