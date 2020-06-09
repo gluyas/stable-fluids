@@ -59,3 +59,8 @@ I will add some interaction features and experiment with this method more, and m
 CGRA408: Basic host-device data transfer.
 This is the main building block for user interaction.
 Will need to consider the integration more carefully: what point in the simulation step, how it interacts with the existing data.
+
+09/06
+CGRA408: Basic boundary conditions.
+This implements the no-slip boundary condition at border cells in the pressure projection.
+Currently advection just uses the border value, but it could be worth exploring alternatives.

@@ -30,7 +30,7 @@ inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=
 void set_volume_texture_parameters(textureReference* texture) {
     texture->normalized = true;
     texture->filterMode = cudaFilterModeLinear;
-    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeWrap;
+    texture->addressMode[0] = texture->addressMode[1] = texture->addressMode[2] = cudaAddressModeClamp; // TODO: border or clamp?
     texture->minMipmapLevelClamp = texture->maxMipmapLevelClamp = 0.0;
     texture->mipmapFilterMode = cudaFilterModePoint;
 }
@@ -278,12 +278,21 @@ void sim_pressure_project_jacobi_iteration_kernel() {
 
     // TODO: compare performance of texture fetch and surface read
     float4 vc = tex3D(d_velocity_read_texture, px,   py,   pz);
-    float4 vl = tex3D(d_velocity_read_texture, px-d, py,   pz);
-    float4 vr = tex3D(d_velocity_read_texture, px+d, py,   pz);
-    float4 vb = tex3D(d_velocity_read_texture, px,   py-d, pz);
-    float4 vf = tex3D(d_velocity_read_texture, px,   py+d, pz);
-    float4 vd = tex3D(d_velocity_read_texture, px,   py,   pz-d);
-    float4 vu = tex3D(d_velocity_read_texture, px,   py,   pz+d);
+
+    float4                vl = make_float4(0.0, 0.0, 0.0, vc.w);
+    if (x != 0)           vl = tex3D(d_velocity_read_texture, px-d, py,   pz);
+    float4                vr = make_float4(0.0, 0.0, 0.0, vc.w);
+    if (x != GRID_SIZE-1) vr = tex3D(d_velocity_read_texture, px+d, py,   pz);
+
+    float4                vb = make_float4(0.0, 0.0, 0.0, vc.w);
+    if (y != 0)           vb = tex3D(d_velocity_read_texture, px,   py-d, pz);
+    float4                vf = make_float4(0.0, 0.0, 0.0, vc.w);
+    if (y != GRID_SIZE-1) vf = tex3D(d_velocity_read_texture, px,   py+d, pz);
+
+    float4                vd = make_float4(0.0, 0.0, 0.0, vc.w);
+    if (z != 0)           vd = tex3D(d_velocity_read_texture, px,   py,   pz-d);
+    float4                vu = make_float4(0.0, 0.0, 0.0, vc.w);
+    if (z != GRID_SIZE-1) vu = tex3D(d_velocity_read_texture, px,   py,   pz+d);
 
     float  u_div  = (vr.x-vl.x + vf.y-vb.y + vu.z-vd.z) * 0.5;
     float  p_out  = (vl.w+vr.w+vb.w+vf.w+vd.w+vu.w - u_div) * (1.0/6.0);
