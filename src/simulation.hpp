@@ -1,10 +1,19 @@
 void sim_init(GLenum density_texture_unit, GLenum debug_data_texture_unit);
-
 void sim_terminate();
+
+void sim_begin_frame();
+void sim_end_frame();
 
 extern int sim_pressure_project_iterations;
 
 void sim_update(double dt);
+
+void sim_set_velocity_and_density(
+    int x, int y, int z,
+    float xf, float yf, float zf, float df,
+    float* velocity, float* density, int pitch, bool nan_is_mask,
+    int xlen, int ylen, int zlen
+);
 
 enum SimDebugDataMode {
     None                           = 0,

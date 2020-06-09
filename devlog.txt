@@ -54,3 +54,8 @@ Turns out to be very simple to implement.
 The visual difference between this and the first-order method is not particularly noticable though.
 This method also has obvious numerical instabilities: the common fix is to clamp the result to neighbouring cells, but this seems like it will cost a lot of texture accesses, which could probably be better spent on a stable integrator.
 I will add some interaction features and experiment with this method more, and maybe try out other integrators.
+
+09/06
+CGRA408: Basic host-device data transfer.
+This is the main building block for user interaction.
+Will need to consider the integration more carefully: what point in the simulation step, how it interacts with the existing data.

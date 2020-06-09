@@ -62,6 +62,7 @@ cudaGraphicsResource_t gl_density_texture_resource;
 // kernel read/write targets
 surface<void,  cudaSurfaceType3D>                          d_density_write_surface;
 texture<float, cudaTextureType3D, cudaReadModeElementType> d_density_read_texture;
+surface<void,  cudaSurfaceType3D>                          d_density_copy_surface;
 
 // array to map gl_density_texture onto
 cudaArray_t d_density_texture_mapped_array;
@@ -76,6 +77,7 @@ cudaArray_t d_velocity_tock_array;
 // kernel read/write targets
 surface<void,   cudaSurfaceType3D>                          d_velocity_write_surface;
 texture<float4, cudaTextureType3D, cudaReadModeElementType> d_velocity_read_texture;
+surface<void,   cudaSurfaceType3D>                          d_velocity_copy_surface;
 
 // DEBUG DATA FIELD
 // OpenGL interop
@@ -94,7 +96,7 @@ int sim_pressure_project_iterations = 16;
 
 // INITIALIZATION
 
-// call AFTER update double-buffered state
+// call BEFORE update double-buffered state
 __host__
 void sim_swap_buffers() {
     static bool tick = false;
@@ -261,7 +263,7 @@ void sim_unmap_gl_debug_data() {
     cudaCheckErrors(cudaGraphicsUnmapResources(1, &gl_debug_data_texture_resource, 0));
 }
 
-// API FUNCTIONS & KERNELS
+// SIMULATION FUNCTIONS
 
 __global__
 void sim_pressure_project_jacobi_iteration_kernel() {
@@ -408,6 +410,147 @@ void sim_update(double dt) {
     }
 
     sim_unmap_gl_density();
+}
+
+// DATA TRANSFER FUNCTIONS
+
+__global__
+void sim_set_velocity_and_density_kernel(
+    int x, int y, int z,
+    float xf, float yf, float zf, float df,
+    bool velocity, bool density, bool nan_is_mask,
+    int xlen, int ylen, int zlen
+) {
+    int ix = blockIdx.x*blockDim.x + threadIdx.x;
+    int iy = blockIdx.y*blockDim.y + threadIdx.y;
+    int iz = blockIdx.z*blockDim.z + threadIdx.z;
+    if (ix > xlen || iy > ylen || iz > zlen) return;
+
+    if (velocity) {
+        float4 v = surf3Dread<float4>(d_velocity_copy_surface, ix*(int)sizeof(float4), iy, iz, cudaBoundaryModeTrap);
+        if (!nan_is_mask || !isnan(v.w)) {
+            v.x *= xf;
+            v.y *= yf;
+            v.z *= zf;
+            surf3Dwrite(
+                v, d_velocity_write_surface,
+                (x + ix)*sizeof(float4), y + iy, z + iz,
+                cudaBoundaryModeTrap
+            );
+        }
+    }
+    if (density) {
+        float d = surf3Dread<float>(d_density_copy_surface, ix*(int)sizeof(float), iy, iz, cudaBoundaryModeTrap);
+        if (!nan_is_mask || !isnan(d)) {
+            d *= df;
+            surf3Dwrite(
+                d, d_density_write_surface,
+                (x + ix)*sizeof(float), y + iy, z + iz,
+                cudaBoundaryModeTrap
+            );
+        }
+    }
+}
+
+__host__
+void sim_set_velocity_and_density(
+    int x, int y, int z,
+    float xf, float yf, float zf, float df,
+    float* velocity, float* density, int pitch_elems, bool nan_is_mask,
+    int xlen, int ylen, int zlen
+) {
+    if (x >= GRID_SIZE || x < -xlen || xlen < 1
+    ||  y >= GRID_SIZE || y < -ylen || ylen < 1
+    ||  z >= GRID_SIZE || z < -zlen || zlen < 1
+    ) {
+        return;
+    }
+
+    // TODO: fix the weird buffer swapping here
+    sim_swap_buffers();
+    if (density) sim_map_gl_density();
+
+    // ensure copy buffer capacity
+    static cudaExtent extent = make_cudaExtent(0, 0, 0);
+    static cudaArray_t d_velocity_copy_array;
+    static cudaArray_t d_density_copy_array;
+
+    if (xlen > extent.width || ylen > extent.height || zlen > extent.depth) {
+        // realloc copy-buffers
+        if (extent.width != 0) {
+            cudaCheckErrors(cudaFreeArray(d_velocity_copy_array));
+            cudaCheckErrors(cudaFreeArray(d_density_copy_array));
+        }
+        extent.width  = max(extent.width,  (size_t) xlen);
+        extent.height = max(extent.height, (size_t) ylen);
+        extent.depth  = max(extent.depth,  (size_t) zlen);
+
+        cudaChannelFormatDesc velocity_format = cudaCreateChannelDesc<float4>();
+        cudaCheckErrors(cudaMalloc3DArray(
+            &d_velocity_copy_array, &velocity_format, extent,
+            cudaArraySurfaceLoadStore
+        ));
+        cudaCheckErrors(cudaBindSurfaceToArray(d_velocity_copy_surface, d_velocity_copy_array));
+
+        cudaChannelFormatDesc density_format = cudaCreateChannelDesc<float>();
+        cudaCheckErrors(cudaMalloc3DArray(
+            &d_density_copy_array, &density_format, extent,
+            cudaArraySurfaceLoadStore
+        ));
+        cudaCheckErrors(cudaBindSurfaceToArray(d_density_copy_surface, d_density_copy_array));
+    }
+
+    // copy arrays to copy-buffers
+    cudaMemcpy3DParms copy = {0};
+    copy.kind   = cudaMemcpyHostToDevice;
+
+    copy.srcPtr.pitch = pitch_elems != 0? pitch_elems : xlen; // multiply by elem size later
+    copy.srcPtr.xsize = xlen;
+    copy.srcPtr.ysize = ylen;
+
+    // clamp origin
+    if (x < 0) { xlen -= -x; copy.srcPos.x = -x; x = 0; }
+    if (y < 0) { ylen -= -y; copy.srcPos.y = -y; y = 0; }
+    if (z < 0) { zlen -= -z; copy.srcPos.z = -z; z = 0; }
+
+    // clamp extents
+    xlen = min(xlen, GRID_SIZE - x);
+    ylen = min(ylen, GRID_SIZE - y);
+    zlen = min(zlen, GRID_SIZE - z);
+    copy.extent = make_cudaExtent(xlen, ylen, zlen);
+
+    if (velocity) {
+        cudaMemcpy3DParms copy_velocity = copy;
+        copy_velocity.dstArray      = d_velocity_copy_array;
+        copy_velocity.srcPtr.ptr    = velocity;
+        copy_velocity.srcPtr.pitch *= sizeof(float4);
+        copy_velocity.srcPos.x     *= sizeof(float4);
+        cudaCheckErrors(cudaMemcpy3D(&copy_velocity));
+    }
+    if (density) {
+        cudaMemcpy3DParms copy_density = copy;
+        copy_density.dstArray      = d_density_copy_array;
+        copy_density.srcPtr.ptr    = density;
+        copy_density.srcPtr.pitch *= sizeof(float);
+        copy_density.srcPos.x     *= sizeof(float);
+        cudaCheckErrors(cudaMemcpy3D(&copy_density));
+    }
+
+    // launch copy kernel
+    dim3 block_dim = dim3(
+        (xlen - 1) / THREAD_DIM.x + 1,
+        (ylen - 1) / THREAD_DIM.y + 1,
+        (zlen - 1) / THREAD_DIM.z + 1
+    );
+    sim_set_velocity_and_density_kernel<<<block_dim, THREAD_DIM>>>(
+        x, y, z,
+        xf/GRID_SCALE, yf/GRID_SCALE, zf/GRID_SCALE, df,
+        velocity != NULL, density != NULL, nan_is_mask,
+        xlen, ylen, zlen
+    );
+
+    if (density) sim_unmap_gl_density();
+    sim_swap_buffers();
 }
 
 // DEBUG FUNCTIONS
