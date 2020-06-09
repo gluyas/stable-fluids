@@ -54,9 +54,8 @@ void glfw_error_callback(int error, const char* description) {
 }
 
 bool  debug_menu = false;
-float debug_max_velocity = 1.0;
 float debug_delta_time   = 1.0/30.0;
-float debug_render_velocity_threshold = debug_max_velocity / 2;
+float debug_render_velocity_threshold = 0.5;
 bool  debug_render_boundaries = false;
 
 // KEYBOARD INPUT
@@ -385,6 +384,25 @@ void main() {
     // INIT COMPUTE
     sim_init(GL_TEXTURE0, GL_TEXTURE1);
 
+    const int sphere_size = 16;
+    const float sphere_fade_radius = 0.1;
+    vec4  sphere_velocity[sphere_size][sphere_size][sphere_size];
+    float sphere_density[sphere_size][sphere_size][sphere_size];
+    for (int i = 0; i < sphere_size; i++) {
+        for (int j = 0; j < sphere_size; j++) {
+            for (int k = 0; k < sphere_size; k++) {
+                vec3 p = 2.0f*vec3((float) i, (float) j, (float) k) / (float) (sphere_size-1) - vec3(1.0);
+                float l = length(p);
+                float w = min(max((1.0 - l)/sphere_fade_radius, 0.0), 1.0);
+                float v;
+                if (l > 1.0) v = NAN;
+                else         v = w;
+                sphere_density[i][j][k]  = v;
+                sphere_velocity[i][j][k] = vec4(w, w, w, v);
+            }
+        }
+    }
+
     // MAIN LOOP
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -403,6 +421,14 @@ void main() {
         static unsigned int debug_render_mode_and_flags = DEBUG_RENDER_FLAG_NONE;
         bool         update_debug_render_mode_and_flags = false;
 
+        static float debug_emitter_speed    = 1.0;
+        static float debug_emitter_freq     = 0.2*TAU;
+        static float debug_emitter_offset   = 0.0;
+        static float debug_emitter_density  = 1.0;
+        static float debug_emitter_wobble   = TAU*0.05;
+        static float debug_emitter_altitude = 0.0;
+        float debug_emitter_vertical_speed = 0.0;
+
         static float debug_camera_auto_rotate = 0.0;
 
         if (debug_menu) {
@@ -419,17 +445,29 @@ void main() {
             if (set_azimuth) debug_camera_auto_rotate = 0.0;
             ImGui::Separator();
 
+            ImGui::Text("Emitter");
+            ImGui::SliderFloat("velocity", &debug_emitter_speed, 0.0, 5.0, "%.3f m/s");
+            static float debug_emitter_freq_temp = debug_emitter_freq;
+            if (ImGui::SliderAngle("rotation speed", &debug_emitter_freq_temp, -360.0, 360.0, "%.0f deg/s")) {
+                // magic math to keep the orientation stable
+                if (debug_emitter_freq_temp != 0.0) debug_emitter_offset = debug_emitter_freq*(g_time + debug_emitter_offset) / debug_emitter_freq_temp - g_time;
+                debug_emitter_freq = debug_emitter_freq_temp;
+            }
+            ImGui::SliderFloat("density", &debug_emitter_density, 0.0, 7.0, "%.3f", 2.0);
+            ImGui::SliderAngle("wobble", &debug_emitter_wobble, 0.0, 90.0);
+            static float debug_emitter_altitude_temp = debug_emitter_altitude;
+            if (ImGui::SliderFloat("altitude", &debug_emitter_altitude_temp, -1.0, 1.0)) {
+                debug_emitter_vertical_speed = debug_emitter_altitude_temp - debug_emitter_altitude;
+                debug_emitter_altitude = debug_emitter_altitude_temp;
+            }
+            ImGui::Separator();
+
             ImGui::Text("Simulation");
             static float debug_delta_time_ms = debug_delta_time * 1000.0;
-            if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000.0/7.5, "%.3f ms", 2.0)) {
+            if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000.0/7.5, "%.3f ms", 1.0)) {
                 debug_delta_time = debug_delta_time_ms / 1000.0;
             }
             ImGui::SliderInt("pressure projection iterations", &sim_pressure_project_iterations, 0, 128);
-            static float input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
-            if (ImGui::SliderFloat("max velocity", &debug_max_velocity, 0.0f, 10.0f, "%.3f m/s", 1.0)) {
-                debug_render_velocity_threshold = debug_max_velocity*input_velocity_threshold_fraction;
-                glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
-            }
             ImGui::Checkbox("first-order advection", &sim_debug_use_basic_advection);
             ImGui::Separator();
 
@@ -444,8 +482,7 @@ void main() {
                 input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
             }
             if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude) {
-                if (ImGui::SliderFloat("velocity render threshold", &debug_render_velocity_threshold, 0.0f, debug_max_velocity, "%.3f", 0.5)) {
-                    input_velocity_threshold_fraction = debug_render_velocity_threshold / debug_max_velocity;
+                if (ImGui::DragFloat("render threshold", &debug_render_velocity_threshold, 0.002f, 0.0, INFINITY, "%.3f m/s", 2.0)) {
                     glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
                 }
             }
@@ -499,12 +536,13 @@ void main() {
 
         if (input_do_debug_reset_density_field) {
             // sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));
-            sim_debug_reset_density_field(debug_max_velocity, 0);
+            sim_debug_reset_density_field(0, 0);
             input_do_debug_reset_density_field = false;
         }
         if (input_do_debug_reset_velocity_field) {
             double k = TAU*100;
-            sim_debug_reset_velocity_field(debug_max_velocity, 0, 0, 0);
+            // sim_debug_reset_velocity_field(debug_max_velocity, 0, 0, 0);
+            sim_debug_reset_velocity_field(0, 0, 0, 0);
             input_do_debug_reset_velocity_field = false;
         }
         if (input_set_sim_debug_data_mode != sim_debug_data_mode) {
@@ -526,6 +564,23 @@ void main() {
         }
 
         // SIM UPDATE
+        float sphere_time = -debug_emitter_freq*(g_time + debug_emitter_offset);
+        vec3 sphere_pos = vec3(0.0, 0.0, debug_emitter_altitude);
+        vec3 sphere_vel = -vec3(-cos(sphere_time), sin(sphere_time), 0.0);
+        float wobble_time = debug_emitter_wobble*sin(0.8*1.61803*TAU*g_time);
+        sphere_vel *= cos(wobble_time);
+        sphere_vel.z = sin(wobble_time);
+        sphere_vel.z += debug_emitter_vertical_speed;
+        sphere_vel *= debug_emitter_speed;
+        sim_set_velocity_and_density(
+            (int) ((sphere_pos.x+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
+            (int) ((sphere_pos.y+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
+            (int) ((sphere_pos.z+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
+            // (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2,
+            sphere_vel.x, sphere_vel.y, sphere_vel.z, debug_emitter_density,
+            (float*) sphere_velocity, (float*) sphere_density, 0, true,
+            sphere_size, sphere_size, sphere_size
+        );
         sim_update(debug_delta_time);
 
         // RENDER
