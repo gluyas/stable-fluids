@@ -64,3 +64,9 @@ Will need to consider the integration more carefully: what point in the simulati
 CGRA402: Basic boundary conditions.
 This implements the no-slip boundary condition at border cells in the pressure projection.
 Currently advection just uses the border value, but it could be worth exploring alternatives.
+
+11/06
+CGRA409: Implement BFECC advection method.
+In my opinion this is a much better integrator: it's much more stable, and although it requires more advection steps, it's actually less texture fetches as the end result is based on a single sample.
+The proposed solutions to clamp the MacCormack integrator involved taking much more samples, which seems far more expensive than just using a higher-order stable integrator.
+The actual results are still not significantly better than the first-order method though.
