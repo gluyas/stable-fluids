@@ -421,7 +421,7 @@ void main() {
         static unsigned int debug_render_mode_and_flags = DEBUG_RENDER_FLAG_NONE;
         bool         update_debug_render_mode_and_flags = false;
 
-        static float debug_emitter_speed    = 1.0;
+        static float debug_emitter_speed    = 3.0;
         static float debug_emitter_freq     = 0.2*TAU;
         static float debug_emitter_offset   = 0.0;
         static float debug_emitter_density  = 1.0;
@@ -446,14 +446,14 @@ void main() {
             ImGui::Separator();
 
             ImGui::Text("Emitter");
-            ImGui::SliderFloat("velocity", &debug_emitter_speed, 0.0, 5.0, "%.3f m/s");
+            ImGui::SliderFloat("force", &debug_emitter_speed, 0.0, 100.0, "%.3f m/s/s", 2.0);
+            ImGui::SliderFloat("volume", &debug_emitter_density, 0.0, 10.0, "%.3f", 2.0);
             static float debug_emitter_freq_temp = debug_emitter_freq;
             if (ImGui::SliderAngle("rotation speed", &debug_emitter_freq_temp, -360.0, 360.0, "%.0f deg/s")) {
                 // magic math to keep the orientation stable
                 if (debug_emitter_freq_temp != 0.0) debug_emitter_offset = debug_emitter_freq*(g_time + debug_emitter_offset) / debug_emitter_freq_temp - g_time;
                 debug_emitter_freq = debug_emitter_freq_temp;
             }
-            ImGui::SliderFloat("density", &debug_emitter_density, 0.0, 7.0, "%.3f", 2.0);
             ImGui::SliderAngle("wobble", &debug_emitter_wobble, 0.0, 90.0);
             static float debug_emitter_altitude_temp = debug_emitter_altitude;
             if (ImGui::SliderFloat("altitude", &debug_emitter_altitude_temp, -1.0, 1.0)) {
@@ -572,12 +572,13 @@ void main() {
         sphere_vel.z = sin(wobble_time);
         sphere_vel.z += debug_emitter_vertical_speed;
         sphere_vel *= debug_emitter_speed;
-        sim_set_velocity_and_density(
+        sphere_vel *= debug_delta_time;
+        sim_add_velocity_and_density(
             (int) ((sphere_pos.x+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
             (int) ((sphere_pos.y+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
             (int) ((sphere_pos.z+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
             // (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2,
-            sphere_vel.x, sphere_vel.y, sphere_vel.z, debug_emitter_density,
+            sphere_vel.x, sphere_vel.y, sphere_vel.z, debug_emitter_density*debug_emitter_speed*debug_delta_time,
             (float*) sphere_velocity, (float*) sphere_density, 0, true,
             sphere_size, sphere_size, sphere_size
         );

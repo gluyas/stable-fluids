@@ -424,7 +424,7 @@ void sim_update(double dt) {
 // DATA TRANSFER FUNCTIONS
 
 __global__
-void sim_set_velocity_and_density_kernel(
+void sim_add_velocity_and_density_kernel(
     int x, int y, int z,
     float xf, float yf, float zf, float df,
     bool velocity, bool density, bool nan_is_mask,
@@ -438,9 +438,10 @@ void sim_set_velocity_and_density_kernel(
     if (velocity) {
         float4 v = surf3Dread<float4>(d_velocity_copy_surface, ix*(int)sizeof(float4), iy, iz, cudaBoundaryModeTrap);
         if (!nan_is_mask || !isnan(v.w)) {
-            v.x *= xf;
-            v.y *= yf;
-            v.z *= zf;
+            float4 w = surf3Dread<float4>(d_velocity_write_surface, (x + ix)*sizeof(float4), y + iy, z + iz, cudaBoundaryModeTrap);
+            v.x *= xf; v.x += w.x;
+            v.y *= yf; v.y += w.y;
+            v.z *= zf; v.z += w.z;
             surf3Dwrite(
                 v, d_velocity_write_surface,
                 (x + ix)*sizeof(float4), y + iy, z + iz,
@@ -452,6 +453,7 @@ void sim_set_velocity_and_density_kernel(
         float d = surf3Dread<float>(d_density_copy_surface, ix*(int)sizeof(float), iy, iz, cudaBoundaryModeTrap);
         if (!nan_is_mask || !isnan(d)) {
             d *= df;
+            d += surf3Dread<float>(d_density_write_surface, (x + ix)*sizeof(float), y + iy, z + iz, cudaBoundaryModeTrap);
             surf3Dwrite(
                 d, d_density_write_surface,
                 (x + ix)*sizeof(float), y + iy, z + iz,
@@ -462,7 +464,7 @@ void sim_set_velocity_and_density_kernel(
 }
 
 __host__
-void sim_set_velocity_and_density(
+void sim_add_velocity_and_density(
     int x, int y, int z,
     float xf, float yf, float zf, float df,
     float* velocity, float* density, int pitch_elems, bool nan_is_mask,
@@ -551,7 +553,7 @@ void sim_set_velocity_and_density(
         (ylen - 1) / THREAD_DIM.y + 1,
         (zlen - 1) / THREAD_DIM.z + 1
     );
-    sim_set_velocity_and_density_kernel<<<block_dim, THREAD_DIM>>>(
+    sim_add_velocity_and_density_kernel<<<block_dim, THREAD_DIM>>>(
         x, y, z,
         xf/GRID_SCALE, yf/GRID_SCALE, zf/GRID_SCALE, df,
         velocity != NULL, density != NULL, nan_is_mask,

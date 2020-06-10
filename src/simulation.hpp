@@ -8,7 +8,7 @@ extern int sim_pressure_project_iterations;
 
 void sim_update(double dt);
 
-void sim_set_velocity_and_density(
+void sim_add_velocity_and_density(
     int x, int y, int z,
     float xf, float yf, float zf, float df,
     float* velocity, float* density, int pitch, bool nan_is_mask,
