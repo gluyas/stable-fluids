@@ -16,8 +16,6 @@ static_assert(GRID_SIZE % 16 == 0, "SIM_GRID_SIZE must be a multiple of 16");
 
 #define DENSITY_TEXTURE_SIZE (GRID_ELEMENTS*sizeof(float))
 
-#define GRID_SCALE SIM_GRID_SCALE
-
 // https://stackoverflow.com/a/14038590/11617929
 #define cudaCheckErrors(ans) { cudaAssert((ans), __FILE__, __LINE__); }
 inline void cudaAssert(cudaError_t code, const char *file, int line, bool abort=true) {
@@ -378,7 +376,7 @@ void sim_update_debug_data_kernel(SimDebugDataMode debug_data_mode) {
     case NormalizedVelocityAndMagnitude: {
         float l = norm3df(v.x, v.y, v.z);
         float n = 1.0 / l;
-        debug_data = make_float4(v.x*n, v.y*n, v.z*n, GRID_SCALE*l);
+        debug_data = make_float4(v.x*n, v.y*n, v.z*n, l);
         break;
     }
     default:
@@ -554,12 +552,82 @@ void sim_add_velocity_and_density(
     );
     sim_add_velocity_and_density_kernel<<<block_dim, THREAD_DIM>>>(
         x, y, z,
-        xf/GRID_SCALE, yf/GRID_SCALE, zf/GRID_SCALE, df,
+        xf, yf, zf, df,
         velocity != NULL, density != NULL, nan_is_mask,
         xlen, ylen, zlen
     );
 
     if (density) sim_unmap_gl_density();
+    sim_swap_buffers();
+}
+
+__global__
+void sim_add_velocity_and_density_along_ray_kernel(
+    float3 rp, float3 rv,
+    float radius2, float hardness,
+    float4 v, float d
+) {
+    int x = blockIdx.x*blockDim.x + threadIdx.x;
+    int y = blockIdx.y*blockDim.y + threadIdx.y;
+    int z = blockIdx.z*blockDim.z + threadIdx.z;
+
+    float px = ((float) x + 0.5) / GRID_SIZE;
+    float py = ((float) y + 0.5) / GRID_SIZE;
+    float pz = ((float) z + 0.5) / GRID_SIZE;
+
+    float dot = (px-rp.x)*rv.x + (py-rp.y)*rv.y + (pz-rp.z)*rv.z;
+    px -= dot*rv.x + rp.x;
+    py -= dot*rv.y + rp.y;
+    pz -= dot*rv.z + rp.z;
+    float distance2 = px*px + py*py + pz*pz;
+    if (distance2 > radius2) return;
+
+    if (hardness != 1.0) {
+        float t = min(1.0, 1.0 - (distance2/radius2 - hardness)/(1.0 - hardness));
+        v.x *= t;
+        v.y *= t;
+        v.z *= t;
+        d   *= t;
+    }
+
+    if (v.w != 0) {
+        float4 w = surf3Dread<float4>(d_velocity_write_surface, x*sizeof(float4), y, z, cudaBoundaryModeTrap);
+        v.x += w.x;
+        v.y += w.y;
+        v.z += w.z;
+        surf3Dwrite(
+            v, d_velocity_write_surface,
+            x*sizeof(float4), y, z,
+            cudaBoundaryModeTrap
+        );
+    }
+    if (d != 0) {
+        d += surf3Dread<float>(d_density_write_surface, x*sizeof(float), y, z, cudaBoundaryModeTrap);
+        surf3Dwrite(
+            d, d_density_write_surface,
+            x*sizeof(float), y, z,
+            cudaBoundaryModeTrap
+        );
+    }
+}
+
+__host__
+void sim_add_velocity_and_density_along_ray(
+    float rpx, float rpy, float rpz,
+    float rvx, float rvy, float rvz,
+    float radius, float hardness,
+    float vx, float vy, float vz, float d
+) {
+    // TODO: fix the weird buffer swapping here
+    sim_swap_buffers();
+    if (d != 0) sim_map_gl_density();
+
+    float3 rp = make_float3(rpx, rpy, rpz);
+    float3 rv = make_float3(rvx, rvy, rvz);
+    float4 v = make_float4(vx, vy, vz, abs(vx)+abs(vy)+abs(vz));
+    sim_add_velocity_and_density_along_ray_kernel<<<BLOCK_DIM, THREAD_DIM>>>(rp, rv, radius*radius, hardness, v, d);
+
+    if (d != 0) sim_unmap_gl_density();
     sim_swap_buffers();
 }
 
@@ -602,7 +670,7 @@ void sim_debug_reset_velocity_field_kernel(float max_component, float3 time) {
 
 __host__
 void sim_debug_reset_velocity_field(float max_velocity, double tx, double ty, double tz) {
-    float max_component = max_velocity/sqrt(3) / GRID_SCALE;
+    float max_component = max_velocity/sqrt(3);
 
     sim_debug_reset_velocity_field_kernel<<<BLOCK_DIM, THREAD_DIM>>>(max_component, make_float3(tx, ty, tz));
     sim_swap_buffers();

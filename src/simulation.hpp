@@ -14,6 +14,12 @@ void sim_add_velocity_and_density(
     float* velocity, float* density, int pitch, bool nan_is_mask,
     int xlen, int ylen, int zlen
 );
+void sim_add_velocity_and_density_along_ray(
+    float rpx, float rpy, float rpz,
+    float rvx, float rvy, float rvz,
+    float radius, float hardness,
+    float vx, float vy, float vz, float d
+);
 
 enum SimDebugDataMode {
     None                           = 0,

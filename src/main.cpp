@@ -60,6 +60,7 @@ bool  debug_render_boundaries = false;
 
 // KEYBOARD INPUT
 
+bool input_mouse_drag_is_brush = true;
 bool input_do_debug_reset_velocity_field = true;
 bool input_do_debug_reset_density_field = true;
 
@@ -79,13 +80,26 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
     case GLFW_KEY_B:
         if (action == GLFW_PRESS) debug_render_boundaries = !debug_render_boundaries;
         break;
-    case GLFW_KEY_SPACE:
+    case GLFW_KEY_R:
         if (action == GLFW_PRESS) {
-            float k = TAU*100;
             input_do_debug_reset_velocity_field = true;
             input_do_debug_reset_density_field = true;
         }
         break;
+    case GLFW_KEY_SPACE: {
+        static GLFWcursor* hand = NULL;
+        if (hand == NULL) {
+            hand = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
+        }
+        if (action == GLFW_PRESS) {
+            input_mouse_drag_is_brush = false;
+            glfwSetCursor(window, hand);
+        } else if (action == GLFW_RELEASE) {
+            input_mouse_drag_is_brush = true;
+            glfwSetCursor(window, NULL);
+        }
+        break;
+    }
     case GLFW_KEY_GRAVE_ACCENT:
         if (action == GLFW_PRESS) debug_menu = !debug_menu;
         break;
@@ -96,25 +110,31 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
 }
 
 // MOUSE INPUT
+// TODO: clean up input state variables
 
-double input_cursor_xpos_prev = 0;
-double input_cursor_ypos_prev = 0;
+double input_cursor_xpos = 0;
+double input_cursor_ypos = 0;
 double input_cursor_xpos_delta = 0;
 double input_cursor_ypos_delta = 0;
 
+vec2 input_cursor_screen_pos = vec3(0.0);
+
 bool input_mouse_dragging_camera = false;
+bool input_mouse_dragging_brush  = false;
 
 void glfw_cursor_pos_callback(GLFWwindow* window, double xpos, double ypos) {
-    input_cursor_xpos_delta = xpos - input_cursor_xpos_prev;
-    input_cursor_ypos_delta = ypos - input_cursor_ypos_prev;
-    input_cursor_xpos_prev = xpos;
-    input_cursor_ypos_prev = ypos;
+    input_cursor_xpos_delta = xpos - input_cursor_xpos;
+    input_cursor_ypos_delta = ypos - input_cursor_ypos;
+    input_cursor_xpos = xpos;
+    input_cursor_ypos = ypos;
+
+    int width, height;
+    glfwGetWindowSize(window, &width, &height);
+    input_cursor_screen_pos = vec2(xpos/float(width-1), 1.0-ypos/float(height-1))*2.0f - vec2(1.0);
 
     ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse) return;
 
-    int width, height;
-    glfwGetWindowSize(window, &width, &height);
     if (input_mouse_dragging_camera) {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
         vec2 normalized = vec2(input_cursor_xpos_delta / float(width-1), input_cursor_ypos_delta / float(height-1));
@@ -129,8 +149,10 @@ void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int 
 
     if (button == GLFW_MOUSE_BUTTON_1) {
         if (action == GLFW_PRESS && !io.WantCaptureMouse) {
-            input_mouse_dragging_camera = true;
+            if (input_mouse_drag_is_brush) input_mouse_dragging_brush  = true;
+            else                           input_mouse_dragging_camera = true;
         } else if (action == GLFW_RELEASE) {
+            input_mouse_dragging_brush  = false;
             input_mouse_dragging_camera = false;
             g_camera_azimuth = glm::mod(g_camera_azimuth + TAU/2, TAU) - TAU/2;
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
@@ -429,12 +451,16 @@ void main() {
         static float debug_emitter_altitude = 0.0;
         float debug_emitter_vertical_speed = 0.0;
 
+        static float debug_brush_strength = 2.0;
+        static float debug_brush_radius   = 0.2;
+        static float debug_brush_hardness = 0.5;
+
         static float debug_camera_auto_rotate = 0.0;
 
         if (debug_menu) {
             // ImGui::ShowDemoWindow();
 
-            ImGui::Begin("Debug Menu");
+            ImGui::Begin("Tools Menu");
 
             ImGui::Text("Camera");
             ImGui::SliderAngle("elevation", &g_camera_elevation, -85, 85);
@@ -460,6 +486,12 @@ void main() {
                 debug_emitter_vertical_speed = debug_emitter_altitude_temp - debug_emitter_altitude;
                 debug_emitter_altitude = debug_emitter_altitude_temp;
             }
+            ImGui::Separator();
+
+            ImGui::Text("Brush");
+            ImGui::SliderFloat("strength##brush", &debug_brush_strength, 0.0, 10.0);
+            ImGui::SliderFloat("radius##brush", &debug_brush_radius, 0.0, 0.5);
+            ImGui::SliderFloat("hardness##brush", &debug_brush_hardness, 0.0, 1.0);
             ImGui::Separator();
 
             ImGui::Text("Simulation");
@@ -529,10 +561,43 @@ void main() {
             g_camera_azimuth = glm::mod(g_camera_azimuth + TAU/2, TAU) - TAU/2;
         }
         vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, -g_camera_elevation), g_camera_azimuth);
-        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, camera_near_clip, 1000.0f) * glm::lookAt(camera_pos, VEC3_0, VEC3_Z);
+        vec3 camera_target = VEC3_0;
+        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, camera_near_clip, 1000.0f) * glm::lookAt(camera_pos, camera_target, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
+        static vec3 mouse_ray_i_prev = vec3(NAN);
+        if (input_mouse_dragging_brush) {
+            // calculate user dragging effects
+            mat4 camera_inverse = inverse(camera);
+            vec4 mouse_ray_p = camera_inverse*vec4(input_cursor_screen_pos, 0.0, 1.0);
+            mouse_ray_p /= mouse_ray_p.w;
+            vec4 mouse_ray_q = camera_inverse*vec4(input_cursor_screen_pos, 1.0, 1.0);
+            mouse_ray_q /= mouse_ray_q.w;
+            vec3 mouse_ray_v = normalize(vec3(mouse_ray_p) - vec3(mouse_ray_q));
+
+            // calculate intersection with billboarded plane at origin
+            vec3 billboard_n = camera_pos - camera_target;
+            vec3 mouse_ray_i = vec3(mouse_ray_p) - vec3(mouse_ray_v)*dot(billboard_n, vec3(mouse_ray_p))/dot(billboard_n, vec3(mouse_ray_v));
+
+            vec3 mouse_ray_d = mouse_ray_i - mouse_ray_i_prev;
+            mouse_ray_i_prev = mouse_ray_i;
+
+            if (!isnan(mouse_ray_d.x)) {
+                mouse_ray_p += vec4(1.0);
+                mouse_ray_p *= 0.5;
+                mouse_ray_d *= 0.5 * debug_brush_strength;
+
+                sim_add_velocity_and_density_along_ray(
+                    mouse_ray_p.x, mouse_ray_p.y, mouse_ray_p.z,
+                    mouse_ray_v.x, mouse_ray_v.y, mouse_ray_v.z,
+                    debug_brush_radius * 0.5, debug_brush_hardness,
+                    mouse_ray_d.x, mouse_ray_d.y, mouse_ray_d.z, 0.0
+                );
+            }
+        } else {
+            mouse_ray_i_prev = vec3(NAN);
+        }
 
         if (input_do_debug_reset_density_field) {
             // sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));

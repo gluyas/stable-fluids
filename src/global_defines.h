@@ -7,7 +7,6 @@
 #define DEGREESf (TAUf / 360.0f)
 
 #define SIM_GRID_SIZE  128
-#define SIM_GRID_SCALE 2.0
 
 // lower byte encodes render mode
 #define DEBUG_RENDER_MODE_MASK        0x00FF
