@@ -119,6 +119,7 @@ double input_cursor_ypos_delta = 0;
 
 vec2 input_cursor_screen_pos = vec3(0.0);
 
+bool input_mouse_shoot_emitter   = false;
 bool input_mouse_dragging_camera = false;
 bool input_mouse_dragging_brush  = false;
 
@@ -147,7 +148,10 @@ void glfw_cursor_pos_callback(GLFWwindow* window, double xpos, double ypos) {
 void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
     ImGuiIO& io = ImGui::GetIO();
 
-    if (button == GLFW_MOUSE_BUTTON_1) {
+    if (button == GLFW_MOUSE_BUTTON_2 || button == GLFW_MOUSE_BUTTON_1 && (mods & GLFW_MOD_CONTROL) != 0) {
+        if (action == GLFW_PRESS && !io.WantCaptureMouse) input_mouse_shoot_emitter = true;
+        else if (action == GLFW_RELEASE) input_mouse_shoot_emitter = false;
+    } else if (button == GLFW_MOUSE_BUTTON_1) {
         if (action == GLFW_PRESS && !io.WantCaptureMouse) {
             if (input_mouse_drag_is_brush) input_mouse_dragging_brush  = true;
             else                           input_mouse_dragging_camera = true;
@@ -157,6 +161,7 @@ void glfw_mouse_button_callback(GLFWwindow* window, int button, int action, int 
             g_camera_azimuth = glm::mod(g_camera_azimuth + TAU/2, TAU) - TAU/2;
             glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
+        input_mouse_shoot_emitter = false;
     }
 }
 
@@ -443,6 +448,7 @@ void main() {
         static unsigned int debug_render_mode_and_flags = DEBUG_RENDER_FLAG_NONE;
         bool         update_debug_render_mode_and_flags = false;
 
+        static bool  debug_emitter_aim      = false;
         static float debug_emitter_speed    = 3.0;
         static float debug_emitter_freq     = 0.2*TAU;
         static float debug_emitter_offset   = 0.0;
@@ -472,15 +478,18 @@ void main() {
             ImGui::Separator();
 
             ImGui::Text("Emitter");
+            ImGui::Checkbox("mouse aim", &debug_emitter_aim);
             ImGui::SliderFloat("force", &debug_emitter_speed, 0.0, 100.0, "%.3f m/s/s", 2.0);
             ImGui::SliderFloat("volume", &debug_emitter_density, 0.0, 10.0, "%.3f", 2.0);
             static float debug_emitter_freq_temp = debug_emitter_freq;
-            if (ImGui::SliderAngle("rotation speed", &debug_emitter_freq_temp, -360.0, 360.0, "%.0f deg/s")) {
-                // magic math to keep the orientation stable
-                if (debug_emitter_freq_temp != 0.0) debug_emitter_offset = debug_emitter_freq*(g_time + debug_emitter_offset) / debug_emitter_freq_temp - g_time;
-                debug_emitter_freq = debug_emitter_freq_temp;
+            if (!debug_emitter_aim) {
+                if (ImGui::SliderAngle("rotation speed", &debug_emitter_freq_temp, -360.0, 360.0, "%.0f deg/s")) {
+                    // magic math to keep the orientation stable
+                    if (debug_emitter_freq_temp != 0.0) debug_emitter_offset = debug_emitter_freq*(g_time + debug_emitter_offset) / debug_emitter_freq_temp - g_time;
+                    debug_emitter_freq = debug_emitter_freq_temp;
+                }
+                ImGui::SliderAngle("wobble", &debug_emitter_wobble, 0.0, 90.0);
             }
-            ImGui::SliderAngle("wobble", &debug_emitter_wobble, 0.0, 90.0);
             static float debug_emitter_altitude_temp = debug_emitter_altitude;
             if (ImGui::SliderFloat("altitude", &debug_emitter_altitude_temp, -1.0, 1.0)) {
                 debug_emitter_vertical_speed = debug_emitter_altitude_temp - debug_emitter_altitude;
@@ -566,22 +575,35 @@ void main() {
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
-        static vec3 mouse_ray_i_prev = vec3(NAN);
-        if (input_mouse_dragging_brush) {
-            // calculate user dragging effects
-            mat4 camera_inverse = inverse(camera);
-            vec4 mouse_ray_p = camera_inverse*vec4(input_cursor_screen_pos, 0.0, 1.0);
-            mouse_ray_p /= mouse_ray_p.w;
-            vec4 mouse_ray_q = camera_inverse*vec4(input_cursor_screen_pos, 1.0, 1.0);
-            mouse_ray_q /= mouse_ray_q.w;
-            vec3 mouse_ray_v = normalize(vec3(mouse_ray_p) - vec3(mouse_ray_q));
+        // calculate user dragging effects
+        mat4 camera_inverse = inverse(camera);
+        vec4 mouse_ray_p = camera_inverse*vec4(input_cursor_screen_pos, 0.0, 1.0);
+        mouse_ray_p /= mouse_ray_p.w;
+        vec4 mouse_ray_q = camera_inverse*vec4(input_cursor_screen_pos, 1.0, 1.0);
+        mouse_ray_q /= mouse_ray_q.w;
+        vec3 mouse_ray_v = normalize(vec3(mouse_ray_p) - vec3(mouse_ray_q));
 
+        static vec3 mouse_ray_cube_hit = VEC3_1;
+        if (true || input_mouse_shoot_emitter) {
+            float min_distance = INFINITY;
+            for (int i = 0; i < 3; i++) {
+                vec3 face_normal = VEC3_0;
+                float face_distance = (1.0 + abs(mouse_ray_p[i])) / abs(mouse_ray_v[i]);
+                if (face_distance < min_distance) {
+                    mouse_ray_cube_hit = vec3(mouse_ray_p) - vec3(mouse_ray_v)*face_distance;
+                    min_distance = face_distance;
+                }
+            }
+        }
+
+        static vec3 mouse_ray_billboard_hit_prev = vec3(NAN);
+        if (input_mouse_dragging_brush) {
             // calculate intersection with billboarded plane at origin
             vec3 billboard_n = camera_pos - camera_target;
-            vec3 mouse_ray_i = vec3(mouse_ray_p) - vec3(mouse_ray_v)*dot(billboard_n, vec3(mouse_ray_p))/dot(billboard_n, vec3(mouse_ray_v));
+            vec3 mouse_ray_billboard_hit = vec3(mouse_ray_p) - vec3(mouse_ray_v)*dot(billboard_n, vec3(mouse_ray_p))/dot(billboard_n, vec3(mouse_ray_v));
 
-            vec3 mouse_ray_d = mouse_ray_i - mouse_ray_i_prev;
-            mouse_ray_i_prev = mouse_ray_i;
+            vec3 mouse_ray_d = mouse_ray_billboard_hit - mouse_ray_billboard_hit_prev;
+            mouse_ray_billboard_hit_prev = mouse_ray_billboard_hit;
 
             if (!isnan(mouse_ray_d.x)) {
                 mouse_ray_p += vec4(1.0);
@@ -596,7 +618,7 @@ void main() {
                 );
             }
         } else {
-            mouse_ray_i_prev = vec3(NAN);
+            mouse_ray_billboard_hit_prev = vec3(NAN);
         }
 
         if (input_do_debug_reset_density_field) {
@@ -628,25 +650,33 @@ void main() {
             update_debug_render_mode_and_flags = false;
         }
 
-        // SIM UPDATE
         float sphere_time = -debug_emitter_freq*(g_time + debug_emitter_offset);
         vec3 sphere_pos = vec3(0.0, 0.0, debug_emitter_altitude);
-        vec3 sphere_vel = -vec3(-cos(sphere_time), sin(sphere_time), 0.0);
-        float wobble_time = debug_emitter_wobble*sin(0.8*1.61803*TAU*g_time);
-        sphere_vel *= cos(wobble_time);
-        sphere_vel.z = sin(wobble_time);
-        sphere_vel.z += debug_emitter_vertical_speed;
-        sphere_vel *= debug_emitter_speed;
-        sphere_vel *= debug_delta_time;
-        sim_add_velocity_and_density(
-            (int) ((sphere_pos.x+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
-            (int) ((sphere_pos.y+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
-            (int) ((sphere_pos.z+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
-            // (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2,
-            sphere_vel.x, sphere_vel.y, sphere_vel.z, debug_emitter_density*debug_emitter_speed*debug_delta_time,
-            (float*) sphere_velocity, (float*) sphere_density, 0, true,
-            sphere_size, sphere_size, sphere_size
-        );
+        vec3 sphere_vel;
+        if (!debug_emitter_aim) {
+            sphere_vel = -vec3(-cos(sphere_time), sin(sphere_time), 0.0);
+            float wobble_time = debug_emitter_wobble*sin(0.8*1.61803*TAU*g_time);
+            sphere_vel *= cos(wobble_time);
+            sphere_vel.z = sin(wobble_time);
+            sphere_vel.z += debug_emitter_vertical_speed;
+            sphere_vel *= debug_emitter_speed;
+            sphere_vel *= debug_delta_time;
+        } else if (input_mouse_shoot_emitter) {
+            sphere_vel = normalize(mouse_ray_cube_hit) * debug_emitter_speed * debug_delta_time;
+        }
+        if (!debug_emitter_aim || input_mouse_shoot_emitter) {
+            sim_add_velocity_and_density(
+                (int) ((sphere_pos.x+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
+                (int) ((sphere_pos.y+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
+                (int) ((sphere_pos.z+1) * (float) (SIM_GRID_SIZE-1)/2)-sphere_size/2,
+                // (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2, (SIM_GRID_SIZE-sphere_size)/2,
+                sphere_vel.x, sphere_vel.y, sphere_vel.z, debug_emitter_density*debug_emitter_speed*debug_delta_time,
+                (float*) sphere_velocity, (float*) sphere_density, 0, true,
+                sphere_size, sphere_size, sphere_size
+            );
+        }
+
+        // SIM UPDATE
         sim_update(debug_delta_time);
 
         // RENDER
