@@ -28,7 +28,7 @@ void main() {
     int i;
     for (i = 0; i < INTEGRATOR_MAX_ITERATIONS; i++) {
         vec3 sample_point_normalized = (sample_point-u_density_field_bounds[0]) / (u_density_field_bounds[1]-u_density_field_bounds[0]);
-        integral += texture(u_density_field, sample_point_normalized).x*INTEGRATOR_STEP_SIZE;
+        integral += texture(u_density_field, sample_point_normalized).x*INTEGRATOR_STEP_SIZE*u_debug_render_density_factor;
         if (integral >= 1.0) {
             integral = 1.0;
             break;

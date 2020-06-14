@@ -12,6 +12,7 @@ uniform vec3 u_camera_pos;
 uniform sampler3D u_debug_data_volume;
 
 uniform int   u_debug_render_mode_and_flags     = DEBUG_RENDER_MODE_DEFAULT | DEBUG_RENDER_FLAG_NONE;
+uniform float u_debug_render_density_factor     = 1.0;
 uniform float u_debug_render_velocity_threshold = 0.0;
 uniform ivec3 u_debug_render_clip_bounds[2]     = ivec3[2](ivec3(0), ivec3(SIM_GRID_SIZE));
 

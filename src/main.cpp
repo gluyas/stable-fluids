@@ -56,6 +56,7 @@ void glfw_error_callback(int error, const char* description) {
 bool  debug_menu = false;
 float debug_delta_time   = 1.0/30.0;
 float debug_render_velocity_threshold = 0.5;
+float debug_render_density_factor = 1.0;
 bool  debug_render_boundaries = false;
 
 // KEYBOARD INPUT
@@ -370,8 +371,13 @@ void main() {
     glUniform1i(u_debug_data_volume, 1);
 
     UNIFORM(program, u_debug_render_mode_and_flags);
+
     UNIFORM(program, u_debug_render_velocity_threshold);
     glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
+
+    UNIFORM(program, u_debug_render_density_factor);
+    glUniform1f(u_debug_render_density_factor, debug_render_density_factor);
+
     UNIFORM(program, u_debug_render_clip_bounds);
 
     ATTRIBUTE(program, a_pos);
@@ -522,7 +528,11 @@ void main() {
             if (ImGui::RadioButton("velocity field", input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude)) {
                 input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
             }
-            if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude) {
+            if (input_set_sim_debug_data_mode == None) {
+                if (ImGui::SliderFloat("density factor", &debug_render_density_factor, 0.0, 1.0)) {
+                    glUniform1f(u_debug_render_density_factor, debug_render_density_factor);
+                }
+            } else if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude) {
                 if (ImGui::DragFloat("render threshold", &debug_render_velocity_threshold, 0.002f, 0.0, INFINITY, "%.3f m/s", 2.0)) {
                     glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
                 }
