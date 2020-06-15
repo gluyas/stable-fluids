@@ -650,6 +650,9 @@ void main() {
         if (input_do_debug_reset_density_field) {
             sim_debug_reset_density_field(0, 0);
             input_do_debug_reset_density_field = false;
+
+            debug_render_density_factor = 1.0;
+            glUniform1f(u_debug_render_density_factor, debug_render_density_factor);
         }
         if (input_do_debug_reset_velocity_field) {
             double k = TAU*100;
