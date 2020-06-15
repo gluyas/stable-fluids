@@ -463,6 +463,7 @@ void main() {
         static unsigned int debug_render_mode_and_flags = DEBUG_RENDER_FLAG_NONE;
         bool         update_debug_render_mode_and_flags = false;
 
+        static float debug_emitter_time     = 0.0;
         static bool  debug_emitter_aim      = false;
         static float debug_emitter_speed    = 3.0;
         static float debug_emitter_freq     = 0.2*TAU;
@@ -501,7 +502,7 @@ void main() {
             if (!debug_emitter_aim) {
                 if (ImGui::SliderAngle("rotation speed", &debug_emitter_freq_temp, -360.0, 360.0, "%.0f deg/s")) {
                     // magic math to keep the orientation stable
-                    if (debug_emitter_freq_temp != 0.0) debug_emitter_offset = debug_emitter_freq*(g_time + debug_emitter_offset) / debug_emitter_freq_temp - g_time;
+                    if (debug_emitter_freq_temp != 0.0) debug_emitter_offset = debug_emitter_freq*(debug_emitter_time + debug_emitter_offset) / debug_emitter_freq_temp - debug_emitter_time;
                     debug_emitter_freq = debug_emitter_freq_temp;
                 }
                 ImGui::SliderAngle("wobble", &debug_emitter_wobble, 0.0, 90.0);
@@ -647,13 +648,11 @@ void main() {
         }
 
         if (input_do_debug_reset_density_field) {
-            // sim_debug_reset_density_field(debug_max_velocity, TAU*100*(g_time));
             sim_debug_reset_density_field(0, 0);
             input_do_debug_reset_density_field = false;
         }
         if (input_do_debug_reset_velocity_field) {
             double k = TAU*100;
-            // sim_debug_reset_velocity_field(debug_max_velocity, 0, 0, 0);
             sim_debug_reset_velocity_field(0, 0, 0, 0);
             input_do_debug_reset_velocity_field = false;
         }
@@ -675,12 +674,12 @@ void main() {
             update_debug_render_mode_and_flags = false;
         }
 
-        float sphere_time = -debug_emitter_freq*(g_time + debug_emitter_offset);
+        float sphere_time = -debug_emitter_freq*(debug_emitter_time + debug_emitter_offset);
         vec3 sphere_pos = vec3(0.0, 0.0, debug_emitter_altitude);
         vec3 sphere_vel;
         if (!debug_emitter_aim) {
             sphere_vel = -vec3(-cos(sphere_time), sin(sphere_time), 0.0);
-            float wobble_time = debug_emitter_wobble*sin(0.8*1.61803*TAU*g_time);
+            float wobble_time = debug_emitter_wobble*sin(0.8*1.61803*TAU*debug_emitter_time);
             sphere_vel *= cos(wobble_time);
             sphere_vel.z = sin(wobble_time);
             sphere_vel.z += debug_emitter_vertical_speed;
@@ -699,6 +698,7 @@ void main() {
                 (float*) sphere_velocity, (float*) sphere_density, 0, true,
                 sphere_size, sphere_size, sphere_size
             );
+            debug_emitter_time += debug_delta_time;
         }
 
         // SIM UPDATE
