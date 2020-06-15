@@ -495,7 +495,7 @@ void main() {
 
             ImGui::Text("Emitter");
             ImGui::SameLine();
-            ImGui::Checkbox("mouse aim", &debug_emitter_aim);
+            ImGui::Checkbox("manual aim", &debug_emitter_aim);
             ImGui::SliderFloat("force", &debug_emitter_speed, 0.0, 100.0, "%.3f m/s/s", 2.0);
             ImGui::SliderFloat("volume", &debug_emitter_density, 0.0, 10.0, "%.3f", 2.0);
             static float debug_emitter_freq_temp = debug_emitter_freq;
@@ -610,7 +610,7 @@ void main() {
         vec3 mouse_ray_v = normalize(vec3(mouse_ray_p) - vec3(mouse_ray_q));
 
         static vec3 mouse_ray_cube_hit = VEC3_1;
-        if (true || input_mouse_shoot_emitter) {
+        if (input_mouse_shoot_emitter) {
             float min_distance = INFINITY;
             for (int i = 0; i < 3; i++) {
                 vec3 face_normal = VEC3_0;
@@ -677,7 +677,9 @@ void main() {
         float sphere_time = -debug_emitter_freq*(debug_emitter_time + debug_emitter_offset);
         vec3 sphere_pos = vec3(0.0, 0.0, debug_emitter_altitude);
         vec3 sphere_vel;
-        if (!debug_emitter_aim) {
+        if (input_mouse_shoot_emitter) {
+            sphere_vel = normalize(mouse_ray_cube_hit) * debug_emitter_speed * debug_delta_time;
+        } else if (!debug_emitter_aim) {
             sphere_vel = -vec3(-cos(sphere_time), sin(sphere_time), 0.0);
             float wobble_time = debug_emitter_wobble*sin(0.8*1.61803*TAU*debug_emitter_time);
             sphere_vel *= cos(wobble_time);
@@ -685,8 +687,6 @@ void main() {
             sphere_vel.z += debug_emitter_vertical_speed;
             sphere_vel *= debug_emitter_speed;
             sphere_vel *= debug_delta_time;
-        } else if (input_mouse_shoot_emitter) {
-            sphere_vel = normalize(mouse_ray_cube_hit) * debug_emitter_speed * debug_delta_time;
         }
         if (!debug_emitter_aim || input_mouse_shoot_emitter) {
             sim_add_velocity_and_density(
