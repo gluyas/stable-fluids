@@ -174,8 +174,8 @@ void glfw_scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     g_camera_distance = max(camera_min_distance, g_camera_distance);
 }
 
-int window_width  = 1280;
-int window_height = 720;
+int window_width  = 1920;
+int window_height = 1080;
 void glfw_window_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
     window_width = width;
@@ -587,6 +587,9 @@ void main() {
                 }
             }
             ImGui::Separator();
+
+            ImGui::Text("prev. frame %.3f ms (%.1f fps)", 1000.0  * g_delta_time, 1.0 / g_delta_time);
+            ImGui::Text("avg.  frame %.3f ms (%.1f fps)", 1000.0f / io.Framerate, io.Framerate);
 
             ImGui::End();
         }
