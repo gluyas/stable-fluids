@@ -53,7 +53,7 @@ void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW error: %s\n", description);
 }
 
-bool  debug_menu = false;
+bool  debug_menu = true;
 float debug_delta_time   = 1.0/30.0;
 float debug_render_velocity_threshold = 0.5;
 float debug_render_density_factor = 1.0;
@@ -493,6 +493,7 @@ void main() {
             ImGui::Separator();
 
             ImGui::Text("Emitter");
+            ImGui::SameLine();
             ImGui::Checkbox("mouse aim", &debug_emitter_aim);
             ImGui::SliderFloat("force", &debug_emitter_speed, 0.0, 100.0, "%.3f m/s/s", 2.0);
             ImGui::SliderFloat("volume", &debug_emitter_density, 0.0, 10.0, "%.3f", 2.0);
@@ -519,6 +520,11 @@ void main() {
             ImGui::Separator();
 
             ImGui::Text("Simulation");
+            ImGui::SameLine();
+            if (ImGui::Button("reset##simulation")) {
+                input_do_debug_reset_velocity_field = true;
+                input_do_debug_reset_density_field = true;
+            }
             static float debug_delta_time_ms = debug_delta_time * 1000.0;
             if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000.0/7.5, "%.3f ms", 1.0)) {
                 debug_delta_time = debug_delta_time_ms / 1000.0;
