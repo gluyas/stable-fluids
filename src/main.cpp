@@ -174,6 +174,14 @@ void glfw_scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     g_camera_distance = max(camera_min_distance, g_camera_distance);
 }
 
+int window_width  = 1280;
+int window_height = 720;
+void glfw_window_size_callback(GLFWwindow* window, int width, int height) {
+    glViewport(0, 0, width, height);
+    window_width = width;
+    window_height = height;
+}
+
 void gl_delete_program_and_attached_shaders(GLuint program) {
     GLint shaders_count;
     glGetProgramiv(program, GL_ATTACHED_SHADERS, &shaders_count);
@@ -310,13 +318,14 @@ void main() {
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Stable Fluids", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(window_width, window_height, "Stable Fluids", NULL, NULL);
     glfwMakeContextCurrent(window);
 
     glfwSetKeyCallback(window, glfw_key_callback);
     glfwSetCursorPosCallback(window, glfw_cursor_pos_callback);
     glfwSetMouseButtonCallback(window, glfw_mouse_button_callback);
     glfwSetScrollCallback(window, glfw_scroll_callback);
+    glfwSetWindowSizeCallback(window, glfw_window_size_callback);
 
     gladLoadGLLoader((GLADloadproc) glfwGetProcAddress);
 
@@ -581,7 +590,7 @@ void main() {
         }
         vec3 camera_pos = rotateZ(rotateX(-g_camera_distance*VEC3_Y, -g_camera_elevation), g_camera_azimuth);
         vec3 camera_target = VEC3_0;
-        mat4 camera = glm::perspective(1.0f, 1280.0f/720.0f, camera_near_clip, 1000.0f) * glm::lookAt(camera_pos, camera_target, VEC3_Z);
+        mat4 camera = glm::perspective(1.0f, (float) window_width / (float) window_height, camera_near_clip, 1000.0f) * glm::lookAt(camera_pos, camera_target, VEC3_Z);
         glUniform3fv(u_camera_pos, 1, (GLfloat*) &camera_pos);
         glUniformMatrix4fv(u_camera, 1, false, (GLfloat*) &camera);
 
