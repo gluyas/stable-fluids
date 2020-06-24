@@ -72,6 +72,6 @@ The proposed solutions to clamp the MacCormack integrator involved taking much m
 The actual results are still not significantly better than the first-order method though.
 
 15/06
-CGRA402: Interactivity Features.
+CGRA402: Interactivity features.
 This adds inputs to disturb and generate flows within the simulation.
 This makes the simulation testbed more or less complete, and should be good to explore further advancements to the simulation.
