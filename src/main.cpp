@@ -62,8 +62,7 @@ bool  debug_render_boundaries = false;
 // KEYBOARD INPUT
 
 bool input_mouse_drag_is_brush = true;
-bool input_do_debug_reset_velocity_field = true;
-bool input_do_debug_reset_density_field = true;
+bool input_do_debug_reset = true;
 
 SimDebugDataMode input_set_sim_debug_data_mode = sim_debug_data_mode;
 
@@ -83,8 +82,7 @@ void glfw_key_callback(GLFWwindow* window, int key, int scancode, int action, in
         break;
     case GLFW_KEY_R:
         if (action == GLFW_PRESS) {
-            input_do_debug_reset_velocity_field = true;
-            input_do_debug_reset_density_field = true;
+            input_do_debug_reset = true;
         }
         break;
     case GLFW_KEY_SPACE: {
@@ -523,8 +521,7 @@ void main() {
             ImGui::Text("Simulation");
             ImGui::SameLine();
             if (ImGui::Button("reset##simulation")) {
-                input_do_debug_reset_velocity_field = true;
-                input_do_debug_reset_density_field = true;
+                input_do_debug_reset = true;
             }
             static float debug_delta_time_ms = debug_delta_time * 1000.0;
             if (ImGui::SliderFloat("delta time", &debug_delta_time_ms, 0.0f, 1000.0/7.5, "%.3f ms", 1.0)) {
@@ -532,6 +529,10 @@ void main() {
             }
             ImGui::SliderInt("pressure projection iterations", &sim_pressure_project_iterations, 0, 128);
             ImGui::Checkbox("first-order advection", &sim_debug_use_basic_advection);
+            float sim_vorticity_confinement_temp = sim_vorticity_confinement;
+            if(ImGui::SliderFloat("vorticity confinement", &sim_vorticity_confinement_temp, 0.0, 10.0)) {
+                sim_vorticity_confinement = (double) sim_vorticity_confinement_temp;
+            }
             ImGui::Separator();
 
             ImGui::Text("Rendering");
@@ -541,15 +542,19 @@ void main() {
                 input_set_sim_debug_data_mode = None;
             }
             ImGui::SameLine();
-            if (ImGui::RadioButton("velocity field", input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude)) {
+            if (ImGui::RadioButton("velocity", input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude)) {
                 input_set_sim_debug_data_mode = NormalizedVelocityAndMagnitude;
+            }
+            ImGui::SameLine();
+            if (ImGui::RadioButton("vorticity", input_set_sim_debug_data_mode == NormalizedVorticityAndMagnitude)) {
+                input_set_sim_debug_data_mode = NormalizedVorticityAndMagnitude;
             }
             if (input_set_sim_debug_data_mode == None) {
                 if (ImGui::SliderFloat("density factor", &debug_render_density_factor, 0.0, 1.0)) {
                     glUniform1f(u_debug_render_density_factor, debug_render_density_factor);
                 }
-            } else if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude) {
-                if (ImGui::DragFloat("render threshold", &debug_render_velocity_threshold, 0.002f, 0.0, INFINITY, "%.3f m/s", 2.0)) {
+            } else if (input_set_sim_debug_data_mode == NormalizedVelocityAndMagnitude || input_set_sim_debug_data_mode == NormalizedVorticityAndMagnitude) {
+                if (ImGui::DragFloat("render threshold", &debug_render_velocity_threshold, 0.002f, 0.0, INFINITY, "%.3f", 2.0)) {
                     glUniform1f(u_debug_render_velocity_threshold, debug_render_velocity_threshold);
                 }
             }
@@ -650,17 +655,9 @@ void main() {
             mouse_ray_billboard_hit_prev = vec3(NAN);
         }
 
-        if (input_do_debug_reset_density_field) {
-            sim_debug_reset_density_field(0, 0);
-            input_do_debug_reset_density_field = false;
-
-            debug_render_density_factor = 1.0;
-            glUniform1f(u_debug_render_density_factor, debug_render_density_factor);
-        }
-        if (input_do_debug_reset_velocity_field) {
-            double k = TAU*100;
-            sim_debug_reset_velocity_field(0, 0, 0, 0);
-            input_do_debug_reset_velocity_field = false;
+        if (input_do_debug_reset) {
+            input_do_debug_reset = false;
+            sim_reset_velocity_and_density();
         }
         if (input_set_sim_debug_data_mode != sim_debug_data_mode) {
             debug_render_mode_and_flags &= ~DEBUG_RENDER_MODE_MASK;
@@ -669,6 +666,9 @@ void main() {
                 debug_render_mode_and_flags |= DEBUG_RENDER_MODE_DEFAULT;
                 break;
             case NormalizedVelocityAndMagnitude:
+                debug_render_mode_and_flags |= DEBUG_RENDER_MODE_VELOCITIES;
+                break;
+            case NormalizedVorticityAndMagnitude:
                 debug_render_mode_and_flags |= DEBUG_RENDER_MODE_VELOCITIES;
                 break;
             }

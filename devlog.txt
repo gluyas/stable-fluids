@@ -75,3 +75,9 @@ The actual results are still not significantly better than the first-order metho
 CGRA402: Interactivity features.
 This adds inputs to disturb and generate flows within the simulation.
 This makes the simulation testbed more or less complete, and should be good to explore further advancements to the simulation.
+
+25/06
+CGRA409: Vorticity confinement.
+Really impressed by the results of this.
+Lots of room to optimize the discretization: currently it takes central differences on all 6 neighbours, which is a total of 24 texture fetches!
+Has about a 3ms performance impact, which is not too bad.

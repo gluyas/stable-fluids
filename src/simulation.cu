@@ -9,10 +9,10 @@
 #define GRID_SIZE SIM_GRID_SIZE
 #define GRID_ELEMENTS (GRID_SIZE*GRID_SIZE*GRID_SIZE)
 
-// operate kernels on 16x16 sheets
-static_assert(GRID_SIZE % 16 == 0, "SIM_GRID_SIZE must be a multiple of 16");
-#define BLOCK_DIM  dim3(GRID_SIZE/16, GRID_SIZE/16, GRID_SIZE)
-#define THREAD_DIM dim3(16, 16, 1)
+// operate kernels on 8x8 sheets
+static_assert(GRID_SIZE % 8 == 0, "SIM_GRID_SIZE must be a multiple of 8");
+#define BLOCK_DIM  dim3(GRID_SIZE/8, GRID_SIZE/8, GRID_SIZE)
+#define THREAD_DIM dim3(8, 8, 1)
 
 #define DENSITY_TEXTURE_SIZE (GRID_ELEMENTS*sizeof(float))
 
@@ -91,6 +91,8 @@ SimDebugDataMode sim_debug_data_mode = None;
 // SIMULATION PARAMETERS
 
 int sim_pressure_project_iterations = 16;
+
+double sim_vorticity_confinement = 4.0;
 
 // INITIALIZATION
 
@@ -277,20 +279,14 @@ void sim_pressure_project_jacobi_iteration_kernel() {
     // TODO: compare performance of texture fetch and surface read
     float4 vc = tex3D(d_velocity_read_texture, px,   py,   pz);
 
-    float4                vl = make_float4(0.0, 0.0, 0.0, vc.w);
-    if (x != 0)           vl = tex3D(d_velocity_read_texture, px-d, py,   pz);
-    float4                vr = make_float4(0.0, 0.0, 0.0, vc.w);
-    if (x != GRID_SIZE-1) vr = tex3D(d_velocity_read_texture, px+d, py,   pz);
+    float4 vl = make_float4(0,0,0, vc.w); if (x != 0)           vl = tex3D(d_velocity_read_texture, px-d, py,   pz);
+    float4 vr = make_float4(0,0,0, vc.w); if (x != GRID_SIZE-1) vr = tex3D(d_velocity_read_texture, px+d, py,   pz);
 
-    float4                vb = make_float4(0.0, 0.0, 0.0, vc.w);
-    if (y != 0)           vb = tex3D(d_velocity_read_texture, px,   py-d, pz);
-    float4                vf = make_float4(0.0, 0.0, 0.0, vc.w);
-    if (y != GRID_SIZE-1) vf = tex3D(d_velocity_read_texture, px,   py+d, pz);
+    float4 vb = make_float4(0,0,0, vc.w); if (y != 0)           vb = tex3D(d_velocity_read_texture, px,   py-d, pz);
+    float4 vf = make_float4(0,0,0, vc.w); if (y != GRID_SIZE-1) vf = tex3D(d_velocity_read_texture, px,   py+d, pz);
 
-    float4                vd = make_float4(0.0, 0.0, 0.0, vc.w);
-    if (z != 0)           vd = tex3D(d_velocity_read_texture, px,   py,   pz-d);
-    float4                vu = make_float4(0.0, 0.0, 0.0, vc.w);
-    if (z != GRID_SIZE-1) vu = tex3D(d_velocity_read_texture, px,   py,   pz+d);
+    float4 vd = make_float4(0,0,0, vc.w); if (z != 0)           vd = tex3D(d_velocity_read_texture, px,   py,   pz-d);
+    float4 vu = make_float4(0,0,0, vc.w); if (z != GRID_SIZE-1) vu = tex3D(d_velocity_read_texture, px,   py,   pz+d);
 
     float  u_div  = (vr.x-vl.x + vf.y-vb.y + vu.z-vd.z) * 0.5;
     float  p_out  = (vl.w+vr.w+vb.w+vf.w+vd.w+vu.w - u_div) * (1.0/6.0);
@@ -358,12 +354,106 @@ void sim_advection_bfecc_kernel(double dt) {
     );
 }
 
+__device__
+inline float3 discrete_curl(float4 l, float4 r, float4 b, float4 f, float4 d, float4 u) {
+    float3 curl;
+    curl.x = (f.z - b.z) - (u.y - d.y);
+    curl.y = (u.x - d.x) - (r.z - l.z);
+    curl.z = (r.y - l.y) - (f.x - b.x);
+    return curl;
+}
+
+__global__
+void sim_vorticity_confinement_kernel(double dt_epsilon) {
+    int x = blockIdx.x*blockDim.x + threadIdx.x;
+    int y = blockIdx.y*blockDim.y + threadIdx.y;
+    int z = blockIdx.z*blockDim.z + threadIdx.z;
+
+    const float d = 1.0 / GRID_SIZE;
+    const float dd = d+d;
+    float px = ((float) x + 0.5) / GRID_SIZE;
+    float py = ((float) y + 0.5) / GRID_SIZE;
+    float pz = ((float) z + 0.5) / GRID_SIZE;
+
+    // TOOD: verify units
+    // TODO: combine with advection kernel
+    // TODO: make use of shared memory
+
+    // collect primary and secondary neighbours' velocities
+    // TODO: use only forward or backwards diferences, change orientation each frame
+    float4 vc  = tex3D(d_velocity_read_texture, px,   py,   pz);
+
+    float4 vl  = tex3D(d_velocity_read_texture, px-d, py,   pz);
+    float4 vlb = tex3D(d_velocity_read_texture, px-d, py-d, pz);
+    float4 vlf = tex3D(d_velocity_read_texture, px-d, py+d, pz);
+    float4 vll = tex3D(d_velocity_read_texture, px-dd,py,  pz);
+
+    float4 vr  = tex3D(d_velocity_read_texture, px+d, py,   pz);
+    float4 vrb = tex3D(d_velocity_read_texture, px+d, py-d, pz);
+    float4 vrf = tex3D(d_velocity_read_texture, px+d, py+d, pz);
+    float4 vrr = tex3D(d_velocity_read_texture, px+dd,py, pz);
+
+    float4 vb  = tex3D(d_velocity_read_texture, px,   py-d, pz);
+    float4 vbd = tex3D(d_velocity_read_texture, px,   py-d, pz-d);
+    float4 vbu = tex3D(d_velocity_read_texture, px,   py-d, pz+d);
+    float4 vbb = tex3D(d_velocity_read_texture, px,   py-dd,pz);
+
+    float4 vf  = tex3D(d_velocity_read_texture, px,   py+d, pz);
+    float4 vfd = tex3D(d_velocity_read_texture, px,   py+d, pz-d);
+    float4 vfu = tex3D(d_velocity_read_texture, px,   py+d, pz+d);
+    float4 vff = tex3D(d_velocity_read_texture, px,   py+dd,pz);
+
+    float4 vd  = tex3D(d_velocity_read_texture, px,   py,   pz-d);
+    float4 vdl = tex3D(d_velocity_read_texture, px-d, py,   pz-d);
+    float4 vdr = tex3D(d_velocity_read_texture, px+d, py,   pz-d);
+    float4 vdd = tex3D(d_velocity_read_texture, px+d, py,   pz-dd);
+
+    float4 vu  = tex3D(d_velocity_read_texture, px,   py,   pz+d);
+    float4 vul = tex3D(d_velocity_read_texture, px-d, py,   pz+d);
+    float4 vur = tex3D(d_velocity_read_texture, px+d, py,   pz+d);
+    float4 vuu = tex3D(d_velocity_read_texture, px+d, py,   pz+dd);
+
+    // calculate vorticities (curl of velocity field) and magnitudes of primary neighbours
+    float3 eta; // gradient of the magnitude of the vorticity
+
+    float3 cl = discrete_curl(vll, vc, vlb, vlf, vdl, vul);
+    float3 cr = discrete_curl(vc, vrr, vrb, vrf, vdr, vur);
+    eta.x = norm3df(cr.x, cr.y, cr.z) - norm3df(cl.x, cl.y, cl.z);
+
+    float3 cb = discrete_curl(vlb, vrb, vbb, vc, vbd, vbu);
+    float3 cf = discrete_curl(vlf, vrf, vc, vff, vfd, vfu);
+    eta.y = norm3df(cf.x, cf.y, cf.z) - norm3df(cb.x, cb.y, cb.z);
+
+    float3 cd = discrete_curl(vdl, vdr, vbd, vfd, vdd, vc);
+    float3 cu = discrete_curl(vul, vur, vbu, vfu, vc, vuu);
+    eta.z = norm3df(cu.x, cu.y, cu.z) - norm3df(cd.x, cd.y, cd.z);
+
+    // calculate vorticity confinement
+    float eta_norm = 1.0/norm3df(eta.x, eta.y, eta.z);
+    if (isfinite(eta_norm)) {
+        eta.x *= eta_norm; eta.y *= eta_norm; eta.z *= eta_norm;
+
+        float3 cc = discrete_curl(vl, vr, vb, vf, vd, vu);
+
+        // apply vorticity confinement (cross of eta and cc)
+        vc.x += (eta.y*cc.z - eta.z*cc.y)*dt_epsilon;
+        vc.y += (eta.z*cc.x - eta.x*cc.z)*dt_epsilon;
+        vc.z += (eta.x*cc.y - eta.y*cc.x)*dt_epsilon;
+    }
+    surf3Dwrite(
+        vc, d_velocity_write_surface,
+        x*sizeof(float4), y, z,
+        cudaBoundaryModeTrap
+    );
+}
+
 __global__
 void sim_update_debug_data_kernel(SimDebugDataMode debug_data_mode) {
     int x = blockIdx.x*blockDim.x + threadIdx.x;
     int y = blockIdx.y*blockDim.y + threadIdx.y;
     int z = blockIdx.z*blockDim.z + threadIdx.z;
 
+    const float d = 1.0 / GRID_SIZE;
     float px = ((float) x + 0.5) / GRID_SIZE;
     float py = ((float) y + 0.5) / GRID_SIZE;
     float pz = ((float) z + 0.5) / GRID_SIZE;
@@ -377,6 +467,21 @@ void sim_update_debug_data_kernel(SimDebugDataMode debug_data_mode) {
         float l = norm3df(v.x, v.y, v.z);
         float n = 0.0; if (l > 0.0) n = 1.0 / l;
         debug_data = make_float4(v.x*n, v.y*n, v.z*n, l);
+        break;
+    }
+    case NormalizedVorticityAndMagnitude: {
+        float4 vl  = tex3D(d_velocity_read_texture, px-d, py,   pz);
+        float4 vr  = tex3D(d_velocity_read_texture, px+d, py,   pz);
+        float4 vb  = tex3D(d_velocity_read_texture, px,   py-d, pz);
+        float4 vf  = tex3D(d_velocity_read_texture, px,   py+d, pz);
+        float4 vd  = tex3D(d_velocity_read_texture, px,   py,   pz-d);
+        float4 vu  = tex3D(d_velocity_read_texture, px,   py,   pz+d);
+
+        float3 cc = discrete_curl(vl, vr, vb, vf, vd, vu);
+        float l = norm3df(cc.x, cc.y, cc.z);
+        float n = 0.0; if (l > 0.0) n = 1.0 / l;
+        debug_data = make_float4(cc.x*n, cc.y*n, cc.z*n, l);
+
         break;
     }
     default:
@@ -402,10 +507,15 @@ __host__
 void sim_update(double dt) {
     sim_map_gl_density();
 
+    if (sim_vorticity_confinement != 0.0) {
+        sim_vorticity_confinement_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt*sim_vorticity_confinement);
+        sim_swap_buffers();
+    }
+
     if (sim_debug_use_basic_advection) sim_advection_first_order_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt);
     else                               sim_advection_bfecc_kernel<<<BLOCK_DIM, THREAD_DIM>>>(dt);
-
     sim_swap_buffers();
+
     for (int i = 0; i < sim_pressure_project_iterations; i++) {
         sim_pressure_project_jacobi_iteration_kernel<<<BLOCK_DIM, THREAD_DIM>>>();
         sim_swap_buffers();
@@ -419,6 +529,24 @@ void sim_update(double dt) {
 }
 
 // DATA TRANSFER FUNCTIONS
+
+__global__
+void sim_reset_velocity_and_density_kernel() {
+    int x = blockIdx.x*blockDim.x + threadIdx.x;
+    int y = blockIdx.y*blockDim.y + threadIdx.y;
+    int z = blockIdx.z*blockDim.z + threadIdx.z;
+
+    surf3Dwrite(make_float4(0,0,0,0), d_velocity_write_surface, x*sizeof(float4), y, z);
+    surf3Dwrite(0,                    d_density_write_surface,  x*sizeof(float),  y, z);
+}
+
+__host__
+void sim_reset_velocity_and_density() {
+    sim_map_gl_density();
+    sim_reset_velocity_and_density_kernel<<<BLOCK_DIM, THREAD_DIM>>>();
+    sim_swap_buffers();
+    sim_unmap_gl_density();
+}
 
 __global__
 void sim_add_velocity_and_density_kernel(
@@ -711,6 +839,7 @@ __host__
 void sim_debug_reset_density_field(float max_density, double t) {
     sim_map_gl_density();
     sim_debug_reset_density_field_kernel<<<BLOCK_DIM, THREAD_DIM>>>(max_density, t);
+    sim_swap_buffers();
     sim_unmap_gl_density();
 }
 

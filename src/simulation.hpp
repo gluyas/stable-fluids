@@ -6,7 +6,11 @@ void sim_end_frame();
 
 extern int sim_pressure_project_iterations;
 
+extern double sim_vorticity_confinement;
+
 void sim_update(double dt);
+
+void sim_reset_velocity_and_density();
 
 void sim_add_velocity_and_density(
     int x, int y, int z,
@@ -22,14 +26,12 @@ void sim_add_velocity_and_density_along_ray(
 );
 
 enum SimDebugDataMode {
-    None                           = 0,
-    NormalizedVelocityAndMagnitude = 1,
+    None                            = 0,
+    NormalizedVelocityAndMagnitude  = 1,
+    NormalizedVorticityAndMagnitude = 2,
 };
 extern SimDebugDataMode sim_debug_data_mode;
 
 extern bool sim_debug_use_basic_advection;
 
 void sim_update_debug_data();
-
-void sim_debug_reset_density_field(float max_density, double t);
-void sim_debug_reset_velocity_field(float max_velocity, double tx, double ty, double tz);
