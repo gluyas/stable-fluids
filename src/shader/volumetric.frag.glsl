@@ -56,6 +56,14 @@ void debug_render_velocities() {
             gl_FragColor = vec4((debug_data.xyz + 1.0)/2.0, 1.0);
             return;
         }
+        if (any(isnan(debug_data))) {
+            if ((ud.x + ud.y + ud.z) % 2 == 0) {
+                gl_FragColor = vec4(1.0, 0.0, 1.0, 1.0);
+            } else {
+                gl_FragColor = vec4(0.0, 1.0, 1.0, 1.0);
+            }
+            return;
+        }
         // step to next grid index
         vec3 tmax = (vec3(ud + max(vd, 0)) - u) / v;
         float t = abs(min(min(tmax.x, tmax.y), tmax.z)); // abs prevents a rare infinite loop

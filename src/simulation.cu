@@ -375,7 +375,7 @@ void sim_update_debug_data_kernel(SimDebugDataMode debug_data_mode) {
     switch (debug_data_mode) {
     case NormalizedVelocityAndMagnitude: {
         float l = norm3df(v.x, v.y, v.z);
-        float n = 1.0 / l;
+        float n = 0.0; if (l > 0.0) n = 1.0 / l;
         debug_data = make_float4(v.x*n, v.y*n, v.z*n, l);
         break;
     }
